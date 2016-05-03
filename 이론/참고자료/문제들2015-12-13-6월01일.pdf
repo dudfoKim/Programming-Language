@@ -1,0 +1,3770 @@
+/*
+ * Copyright(c) 1999 - 2004 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc., 59
+ * Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * The full GNU General Public License is included in this distribution in the
+ * file called LICENSE.
+ *
+ */
+
+#ifndef _NET_BOND_3AD_H
+#define _NET_BOND_3AD_H
+
+#include <asm/byteorder.h>
+#include <linux/skbuff.h>
+#include <linux/netdevice.h>
+#include <linux/if_ether.h>
+
+/* General definitions */
+#define PKT_TYPE_LACPDU         cpu_to_be16(ETH_P_SLOW)
+#define AD_TIMER_INTERVAL       100 /*msec*/
+
+#define MULTICAST_LACPDU_ADDR    {0x01, 0x80, 0xC2, 0x00, 0x00, 0x02}
+
+#define AD_LACP_SLOW 0
+#define AD_LACP_FAST 1
+
+typedef struct mac_addr {
+	u8 mac_addr_value[ETH_ALEN];
+} __packed mac_addr_t;
+
+enum {
+	BOND_AD_STABLE = 0,
+	BOND_AD_BANDWIDTH = 1,
+	BOND_AD_COUNT = 2,
+};
+
+/* rx machine states(43.4.11 in the 802.3ad standard) */
+typedef enum {
+	AD_RX_DUMMY,
+	AD_RX_INITIALIZE,	/* rx Machine */
+	AD_RX_PORT_DISABLED,	/* rx Machine */
+	AD_RX_LACP_DISABLED,	/* rx Machine */
+	AD_RX_EXPIRED,		/* rx Machine */
+	AD_RX_DEFAULTED,	/* rx Machine */
+	AD_RX_CURRENT		/* rx Machine */
+} rx_states_t;
+
+/* periodic machine states(43.4.12 in the 802.3ad standard) */
+typedef enum {
+	AD_PERIODIC_DUMMY,
+	AD_NO_PERIODIC,		/* periodic machine */
+	AD_FAST_PERIODIC,	/* periodic machine */
+	AD_SLOW_PERIODIC,	/* periodic machine */
+	AD_PERIODIC_TX		/* periodic machine */
+} periodic_states_t;
+
+/* mux machine states(43.4.13 in the 802.3ad standard) */
+typedef enum {
+	AD_MUX_DUMMY,
+	AD_MUX_DETACHED,	/* mux machine */
+	AD_MUX_WAITING,		/* mux machine */
+	AD_MUX_ATTACHED,	/* mux machine */
+	AD_MUX_COLLECTING_DISTRIBUTING	/* mux machine */
+} mux_states_t;
+
+/* tx machine states(43.4.15 in the 802.3ad standard) */
+typedef enum {
+	AD_TX_DUMMY,
+	AD_TRANSMIT		/* tx Machine */
+} tx_states_t;
+
+/* churn machine states(43.4.17 in the 802.3ad standard) */
+typedef enum {
+	 AD_CHURN_MONITOR, /* monitoring for churn */
+	 AD_CHURN,         /* churn detected (error) */
+	 AD_NO_CHURN       /* no churn (no error) */
+} churn_state_t;
+
+/* rx indication types */
+typedef enum {
+	AD_TYPE_LACPDU = 1,	/* type lacpdu */
+	AD_TYPE_MARKER		/* type marker */
+} pdu_type_t;
+
+/* rx marker indication types */
+typedef enum {
+	AD_MARKER_INFORMATION_SUBTYPE = 1,	/* marker imformation subtype */
+	AD_MARKER_RESPONSE_SUBTYPE		/* marker response subtype */
+} bond_marker_subtype_t;
+
+/* timers types(43.4.9 in the 802.3ad standard) */
+typedef enum {
+	AD_CURRENT_WHILE_TIMER,
+	AD_ACTOR_CHURN_TIMER,
+	AD_PERIODIC_TIMER,
+	AD_PARTNER_CHURN_TIMER,
+	AD_WAIT_WHILE_TIMER
+} ad_timers_t;
+
+#pragma pack(1)
+
+/* Link Aggregation Control Protocol(LACP) data unit structure(43.4.2.2 in the 802.3ad standard) */
+typedef struct lacpdu {
+	u8 subtype;		/* = LACP(= 0x01) */
+	u8 version_number;
+	u8 tlv_type_actor_info;	/* = actor information(type/length/value) */
+	u8 actor_information_length;	/* = 20 */
+	__be16 actor_system_priority;
+	struct mac_addr actor_system;
+	__be16 actor_key;
+	__be16 actor_port_priority;
+	__be16 actor_port;
+	u8 actor_state;
+	u8 reserved_3_1[3];		/* = 0 */
+	u8 tlv_type_partner_info;	/* = partner information */
+	u8 partner_information_length;	/* = 20 */
+	__be16 partner_system_priority;
+	struct mac_addr partner_system;
+	__be16 partner_key;
+	__be16 partner_port_priority;
+	__be16 partner_port;
+	u8 partner_state;
+	u8 reserved_3_2[3];		/* = 0 */
+	u8 tlv_type_collector_info;	/* = collector information */
+	u8 collector_information_length;/* = 16 */
+	__be16 collector_max_delay;
+	u8 reserved_12[12];
+	u8 tlv_type_terminator;		/* = terminator */
+	u8 terminator_length;		/* = 0 */
+	u8 reserved_50[50];		/* = 0 */
+} __packed lacpdu_t;
+
+typedef struct lacpdu_header {
+	struct ethhdr hdr;
+	struct lacpdu lacpdu;
+} __packed lacpdu_header_t;
+
+/* Marker Protocol Data Unit(PDU) structure(43.5.3.2 in the 802.3ad standard) */
+typedef struct bond_marker {
+	u8 subtype;		/* = 0x02  (marker PDU) */
+	u8 version_number;	/* = 0x01 */
+	u8 tlv_type;		/* = 0x01  (marker information) */
+	/* = 0x02  (marker response information) */
+	u8 marker_length;	/* = 0x16 */
+	u16 requester_port;	/* The number assigned to the port by the requester */
+	struct mac_addr requester_system;	/* The requester's system id */
+	u32 requester_transaction_id;		/* The transaction id allocated by the requester, */
+	u16 pad;		/* = 0 */
+	u8 tlv_type_terminator;	/* = 0x00 */
+	u8 terminator_length;	/* = 0x00 */
+	u8 reserved_90[90];	/* = 0 */
+} __packed bond_marker_t;
+
+typedef struct bond_marker_header {
+	struct ethhdr hdr;
+	struct bond_marker marker;
+} __packed bond_marker_header_t;
+
+#pragma pack()
+
+struct slave;
+struct bonding;
+struct ad_info;
+struct port;
+
+#ifdef __ia64__
+#pragma pack(8)
+#endif
+
+/* aggregator structure(43.4.5 in the 802.3ad standard) */
+typedef struct aggregator {
+	struct mac_addr aggregator_mac_address;
+	u16 aggregator_identifier;
+	bool is_individual;
+	u16 actor_admin_aggregator_key;
+	u16 actor_oper_aggregator_key;
+	struct mac_addr partner_system;
+	u16 partner_system_priority;
+	u16 partner_oper_aggregator_key;
+	u16 receive_state;	/* BOOLEAN */
+	u16 transmit_state;	/* BOOLEAN */
+	struct port *lag_ports;
+	/* ****** PRIVATE PARAMETERS ****** */
+	struct slave *slave;	/* pointer to the bond slave that this aggregator belongs to */
+	u16 is_active;		/* BOOLEAN. Indicates if this aggregator is active */
+	u16 num_of_ports;
+} aggregator_t;
+
+struct port_params {
+	struct mac_addr system;
+	u16 system_priority;
+	u16 key;
+	u16 port_number;
+	u16 port_priority;
+	u16 port_state;
+};
+
+/* port structure(43.4.6 in the 802.3ad standard) */
+typedef struct port {
+	u16 actor_port_number;
+	u16 actor_port_priority;
+	struct mac_addr actor_system;	/* This parameter is added here although it is not specified in the standard, just for simplification */
+	u16 actor_system_priority;	/* This parameter is added here although it is not specified in the standard, just for simplification */
+	u16 actor_port_aggregator_identifier;
+	bool ntt;
+	u16 actor_admin_port_key;
+	u16 actor_oper_port_key;
+	u8 actor_admin_port_state;
+	u8 actor_oper_port_state;
+
+	struct port_params partner_admin;
+	struct port_params partner_oper;
+
+	bool is_enabled;
+
+	/* ****** PRIVATE PARAMETERS ****** */
+	u16 sm_vars;		/* all state machines variables for this port */
+	rx_states_t sm_rx_state;	/* state machine rx state */
+	u16 sm_rx_timer_counter;	/* state machine rx timer counter */
+	periodic_states_t sm_periodic_state;	/* state machine periodic state */
+	u16 sm_periodic_timer_counter;	/* state machine periodic timer counter */
+	mux_states_t sm_mux_state;	/* state machine mux state */
+	u16 sm_mux_timer_counter;	/* state machine mux timer counter */
+	tx_states_t sm_tx_state;	/* state machine tx state */
+	u16 sm_tx_timer_counter;	/* state machine tx timer counter(allways on - enter to transmit state 3 time per second) */
+	u16 sm_churn_actor_timer_counter;
+	u16 sm_churn_partner_timer_counter;
+	u32 churn_actor_count;
+	u32 churn_partner_count;
+	churn_state_t sm_churn_actor_state;
+	churn_state_t sm_churn_partner_state;
+	struct slave *slave;		/* pointer to the bond slave that this port belongs to */
+	struct aggregator *aggregator;	/* pointer to an aggregator that this port related to */
+	struct port *next_port_in_aggregator;	/* Next port on the linked list of the parent aggregator */
+	u32 transaction_id;		/* continuous number for identification of Marker PDU's; */
+	struct lacpdu lacpdu;		/* the lacpdu that will be sent for this port */
+} port_t;
+
+/* system structure */
+struct ad_system {
+	u16 sys_priority;
+	struct mac_addr sys_mac_addr;
+};
+
+#ifdef __ia64__
+#pragma pack()
+#endif
+
+/* ========== AD Exported structures to the main bonding code ========== */
+#define BOND_AD_INFO(bond)   ((bond)->ad_info)
+#define SLAVE_AD_INFO(slave) ((slave)->ad_info)
+
+struct ad_bond_info {
+	struct ad_system system;	/* 802.3ad system structure */
+	u32 agg_select_timer;		/* Timer to select aggregator after all adapter's hand shakes */
+	u16 aggregator_identifier;
+};
+
+struct ad_slave_info {
+	struct aggregator aggregator;	/* 802.3ad aggregator structure */
+	struct port port;		/* 802.3ad port structure */
+	u16 id;
+};
+
+static inline const char *bond_3ad_churn_desc(churn_state_t state)
+{
+	static const char *const churn_description[] = {
+		"monitoring",
+		"churned",
+		"none",
+		"unknown"
+	};
+	int max_size = sizeof(churn_description) / sizeof(churn_description[0]);
+
+	if (state >= max_size)
+		state = max_size - 1;
+
+	return churn_description[state];
+}
+
+/* ========== AD Exported functions to the main bonding code ========== */
+void bond_3ad_initialize(struct bonding *bond, u16 tick_resolution);
+void bond_3ad_bind_slave(struct slave *slave);
+void bond_3ad_unbind_slave(struct slave *slave);
+void bond_3ad_state_machine_handler(struct work_struct *);
+void bond_3ad_initiate_agg_selection(struct bonding *bond, int timeout);
+void bond_3ad_adapter_speed_changed(struct slave *slave);
+void bond_3ad_adapter_duplex_changed(struct slave *slave);
+void bond_3ad_handle_link_change(struct slave *slave, char link);
+int  bond_3ad_get_active_agg_info(struct bonding *bond, struct ad_info *ad_info);
+int  __bond_3ad_get_active_agg_info(struct bonding *bond,
+				    struct ad_info *ad_info);
+int bond_3ad_lacpdu_recv(const struct sk_buff *skb, struct bonding *bond,
+			 struct slave *slave);
+int bond_3ad_set_carrier(struct bonding *bond);
+void bond_3ad_update_lacp_rate(struct bonding *bond);
+#endif /* _NET_BOND_3AD_H */
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                /*
+ * drivers/net/bond/bond_options.h - bonding options
+ * Copyright (c) 2013 Nikolay Aleksandrov <nikolay@redhat.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
+
+#ifndef _NET_BOND_OPTIONS_H
+#define _NET_BOND_OPTIONS_H
+
+#define BOND_OPT_MAX_NAMELEN 32
+#define BOND_OPT_VALID(opt) ((opt) < BOND_OPT_LAST)
+#define BOND_MODE_ALL_EX(x) (~(x))
+
+/* Option flags:
+ * BOND_OPTFLAG_NOSLAVES - check if the bond device is empty before setting
+ * BOND_OPTFLAG_IFDOWN - check if the bond device is down before setting
+ * BOND_OPTFLAG_RAWVAL - the option parses the value itself
+ */
+enum {
+	BOND_OPTFLAG_NOSLAVES	= BIT(0),
+	BOND_OPTFLAG_IFDOWN	= BIT(1),
+	BOND_OPTFLAG_RAWVAL	= BIT(2)
+};
+
+/* Value type flags:
+ * BOND_VALFLAG_DEFAULT - mark the value as default
+ * BOND_VALFLAG_(MIN|MAX) - mark the value as min/max
+ */
+enum {
+	BOND_VALFLAG_DEFAULT	= BIT(0),
+	BOND_VALFLAG_MIN	= BIT(1),
+	BOND_VALFLAG_MAX	= BIT(2)
+};
+
+/* Option IDs, their bit positions correspond to their IDs */
+enum {
+	BOND_OPT_MODE,
+	BOND_OPT_PACKETS_PER_SLAVE,
+	BOND_OPT_XMIT_HASH,
+	BOND_OPT_ARP_VALIDATE,
+	BOND_OPT_ARP_ALL_TARGETS,
+	BOND_OPT_FAIL_OVER_MAC,
+	BOND_OPT_ARP_INTERVAL,
+	BOND_OPT_ARP_TARGETS,
+	BOND_OPT_DOWNDELAY,
+	BOND_OPT_UPDELAY,
+	BOND_OPT_LACP_RATE,
+	BOND_OPT_MINLINKS,
+	BOND_OPT_AD_SELECT,
+	BOND_OPT_NUM_PEER_NOTIF,
+	BOND_OPT_MIIMON,
+	BOND_OPT_PRIMARY,
+	BOND_OPT_PRIMARY_RESELECT,
+	BOND_OPT_USE_CARRIER,
+	BOND_OPT_ACTIVE_SLAVE,
+	BOND_OPT_QUEUE_ID,
+	BOND_OPT_ALL_SLAVES_ACTIVE,
+	BOND_OPT_RESEND_IGMP,
+	BOND_OPT_LP_INTERVAL,
+	BOND_OPT_SLAVES,
+	BOND_OPT_TLB_DYNAMIC_LB,
+	BOND_OPT_AD_ACTOR_SYS_PRIO,
+	BOND_OPT_AD_ACTOR_SYSTEM,
+	BOND_OPT_AD_USER_PORT_KEY,
+	BOND_OPT_LAST
+};
+
+/* This structure is used for storing option values and for passing option
+ * values when changing an option. The logic when used as an arg is as follows:
+ * - if string != NULL -> parse it, if the opt is RAW type then return it, else
+ *   return the parse result
+ * - if string == NULL -> parse value
+ */
+struct bond_opt_value {
+	char *string;
+	u64 value;
+	u32 flags;
+};
+
+struct bonding;
+
+struct bond_option {
+	int id;
+	const char *name;
+	const char *desc;
+	u32 flags;
+
+	/* unsuppmodes is used to denote modes in which the option isn't
+	 * supported.
+	 */
+	unsigned long unsuppmodes;
+	/* supported values which this option can have, can be a subset of
+	 * BOND_OPTVAL_RANGE's value range
+	 */
+	const struct bond_opt_value *values;
+
+	int (*set)(struct bonding *bond, const struct bond_opt_value *val);
+};
+
+int __bond_opt_set(struct bonding *bond, unsigned int option,
+		   struct bond_opt_value *val);
+int bond_opt_tryset_rtnl(struct bonding *bond, unsigned int option, char *buf);
+
+const struct bond_opt_value *bond_opt_parse(const struct bond_option *opt,
+					    struct bond_opt_value *val);
+const struct bond_option *bond_opt_get(unsigned int option);
+const struct bond_option *bond_opt_get_by_name(const char *name);
+const struct bond_opt_value *bond_opt_get_val(unsigned int option, u64 val);
+
+/* This helper is used to initialize a bond_opt_value structure for parameter
+ * passing. There should be either a valid string or value, but not both.
+ * When value is ULLONG_MAX then string will be used.
+ */
+static inline void __bond_opt_init(struct bond_opt_value *optval,
+				   char *string, u64 value)
+{
+	memset(optval, 0, sizeof(*optval));
+	optval->value = ULLONG_MAX;
+	if (value == ULLONG_MAX)
+		optval->string = string;
+	else
+		optval->value = value;
+}
+#define bond_opt_initval(optval, value) __bond_opt_init(optval, NULL, value)
+#define bond_opt_initstr(optval, str) __bond_opt_init(optval, str, ULLONG_MAX)
+
+void bond_option_arp_ip_targets_clear(struct bonding *bond);
+
+#endif /* _NET_BOND_OPTIONS_H */
+                                                                                                                                                                                                                             /*
+ * Bond several ethernet interfaces into a Cisco, running 'Etherchannel'.
+ *
+ * Portions are (c) Copyright 1995 Simon "Guru Aleph-Null" Janes
+ * NCM: Network and Communications Management, Inc.
+ *
+ * BUT, I'm the one who modified it for ethernet, so:
+ * (c) Copyright 1999, Thomas Davis, tadavis@lbl.gov
+ *
+ *	This software may be used and distributed according to the terms
+ *	of the GNU Public License, incorporated herein by reference.
+ *
+ */
+
+#ifndef _NET_BONDING_H
+#define _NET_BONDING_H
+
+#include <linux/timer.h>
+#include <linux/proc_fs.h>
+#include <linux/if_bonding.h>
+#include <linux/cpumask.h>
+#include <linux/in6.h>
+#include <linux/netpoll.h>
+#include <linux/inetdevice.h>
+#include <linux/etherdevice.h>
+#include <linux/reciprocal_div.h>
+#include <linux/if_link.h>
+
+#include <net/bond_3ad.h>
+#include <net/bond_alb.h>
+#include <net/bond_options.h>
+
+#define BOND_MAX_ARP_TARGETS	16
+
+#define BOND_DEFAULT_MIIMON	100
+
+/*
+ * Less bad way to call ioctl from within the kernel; this needs to be
+ * done some other way to get the call out of interrupt context.
+ * Needs "ioctl" variable to be supplied by calling context.
+ */
+#define IOCTL(dev, arg, cmd) ({		\
+	int res = 0;			\
+	mm_segment_t fs = get_fs();	\
+	set_fs(get_ds());		\
+	res = ioctl(dev, arg, cmd);	\
+	set_fs(fs);			\
+	res; })
+
+#define BOND_MODE(bond) ((bond)->params.mode)
+
+/* slave list primitives */
+#define bond_slave_list(bond) (&(bond)->dev->adj_list.lower)
+
+#define bond_has_slaves(bond) !list_empty(bond_slave_list(bond))
+
+/* IMPORTANT: bond_first/last_slave can return NULL in case of an empty list */
+#define bond_first_slave(bond) \
+	(bond_has_slaves(bond) ? \
+		netdev_adjacent_get_private(bond_slave_list(bond)->next) : \
+		NULL)
+#define bond_last_slave(bond) \
+	(bond_has_slaves(bond) ? \
+		netdev_adjacent_get_private(bond_slave_list(bond)->prev) : \
+		NULL)
+
+/* Caller must have rcu_read_lock */
+#define bond_first_slave_rcu(bond) \
+	netdev_lower_get_first_private_rcu(bond->dev)
+
+#define bond_is_first_slave(bond, pos) (pos == bond_first_slave(bond))
+#define bond_is_last_slave(bond, pos) (pos == bond_last_slave(bond))
+
+/**
+ * bond_for_each_slave - iterate over all slaves
+ * @bond:	the bond holding this list
+ * @pos:	current slave
+ * @iter:	list_head * iterator
+ *
+ * Caller must hold RTNL
+ */
+#define bond_for_each_slave(bond, pos, iter) \
+	netdev_for_each_lower_private((bond)->dev, pos, iter)
+
+/* Caller must have rcu_read_lock */
+#define bond_for_each_slave_rcu(bond, pos, iter) \
+	netdev_for_each_lower_private_rcu((bond)->dev, pos, iter)
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+extern atomic_t netpoll_block_tx;
+
+static inline void block_netpoll_tx(void)
+{
+	atomic_inc(&netpoll_block_tx);
+}
+
+static inline void unblock_netpoll_tx(void)
+{
+	atomic_dec(&netpoll_block_tx);
+}
+
+static inline int is_netpoll_tx_blocked(struct net_device *dev)
+{
+	if (unlikely(netpoll_tx_running(dev)))
+		return atomic_read(&netpoll_block_tx);
+	return 0;
+}
+#else
+#define block_netpoll_tx()
+#define unblock_netpoll_tx()
+#define is_netpoll_tx_blocked(dev) (0)
+#endif
+
+struct bond_params {
+	int mode;
+	int xmit_policy;
+	int miimon;
+	u8 num_peer_notif;
+	int arp_interval;
+	int arp_validate;
+	int arp_all_targets;
+	int use_carrier;
+	int fail_over_mac;
+	int updelay;
+	int downdelay;
+	int lacp_fast;
+	unsigned int min_links;
+	int ad_select;
+	char primary[IFNAMSIZ];
+	int primary_reselect;
+	__be32 arp_targets[BOND_MAX_ARP_TARGETS];
+	int tx_queues;
+	int all_slaves_active;
+	int resend_igmp;
+	int lp_interval;
+	int packets_per_slave;
+	int tlb_dynamic_lb;
+	struct reciprocal_value reciprocal_packets_per_slave;
+	u16 ad_actor_sys_prio;
+	u16 ad_user_port_key;
+	u8 ad_actor_system[ETH_ALEN];
+};
+
+struct bond_parm_tbl {
+	char *modename;
+	int mode;
+};
+
+struct netdev_notify_work {
+	struct delayed_work	work;
+	struct net_device	*dev;
+	struct netdev_bonding_info bonding_info;
+};
+
+struct slave {
+	struct net_device *dev; /* first - useful for panic debug */
+	struct bonding *bond; /* our master */
+	int    delay;
+	/* all three in jiffies */
+	unsigned long last_link_up;
+	unsigned long last_rx;
+	unsigned long target_last_arp_rx[BOND_MAX_ARP_TARGETS];
+	s8     link;    /* one of BOND_LINK_XXXX */
+	s8     new_link;
+	u8     backup:1,   /* indicates backup slave. Value corresponds with
+			      BOND_STATE_ACTIVE and BOND_STATE_BACKUP */
+	       inactive:1, /* indicates inactive slave */
+	       should_notify:1; /* indicateds whether the state changed */
+	u8     duplex;
+	u32    original_mtu;
+	u32    link_failure_count;
+	u32    speed;
+	u16    queue_id;
+	u8     perm_hwaddr[ETH_ALEN];
+	struct ad_slave_info *ad_info;
+	struct tlb_slave_info tlb_info;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	struct netpoll *np;
+#endif
+	struct kobject kobj;
+	struct rtnl_link_stats64 slave_stats;
+};
+
+struct bond_up_slave {
+	unsigned int	count;
+	struct rcu_head rcu;
+	struct slave	*arr[0];
+};
+
+/*
+ * Link pseudo-state only used internally by monitors
+ */
+#define BOND_LINK_NOCHANGE -1
+
+/*
+ * Here are the locking policies for the two bonding locks:
+ * Get rcu_read_lock when reading or RTNL when writing slave list.
+ */
+struct bonding {
+	struct   net_device *dev; /* first - useful for panic debug */
+	struct   slave __rcu *curr_active_slave;
+	struct   slave __rcu *current_arp_slave;
+	struct   slave __rcu *primary_slave;
+	struct   bond_up_slave __rcu *slave_arr; /* Array of usable slaves */
+	bool     force_primary;
+	s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
+	int     (*recv_probe)(const struct sk_buff *, struct bonding *,
+			      struct slave *);
+	/* mode_lock is used for mode-specific locking needs, currently used by:
+	 * 3ad mode (4) - protect against running bond_3ad_unbind_slave() and
+	 *                bond_3ad_state_machine_handler() concurrently and also
+	 *                the access to the state machine shared variables.
+	 * TLB mode (5) - to sync the use and modifications of its hash table
+	 * ALB mode (6) - to sync the use and modifications of its hash table
+	 */
+	spinlock_t mode_lock;
+	u8	 send_peer_notif;
+	u8       igmp_retrans;
+#ifdef CONFIG_PROC_FS
+	struct   proc_dir_entry *proc_entry;
+	char     proc_file_name[IFNAMSIZ];
+#endif /* CONFIG_PROC_FS */
+	struct   list_head bond_list;
+	u32      rr_tx_counter;
+	struct   ad_bond_info ad_info;
+	struct   alb_bond_info alb_info;
+	struct   bond_params params;
+	struct   workqueue_struct *wq;
+	struct   delayed_work mii_work;
+	struct   delayed_work arp_work;
+	struct   delayed_work alb_work;
+	struct   delayed_work ad_work;
+	struct   delayed_work mcast_work;
+	struct   delayed_work slave_arr_work;
+#ifdef CONFIG_DEBUG_FS
+	/* debugging support via debugfs */
+	struct	 dentry *debug_dir;
+#endif /* CONFIG_DEBUG_FS */
+	struct rtnl_link_stats64 bond_stats;
+};
+
+#define bond_slave_get_rcu(dev) \
+	((struct slave *) rcu_dereference(dev->rx_handler_data))
+
+#define bond_slave_get_rtnl(dev) \
+	((struct slave *) rtnl_dereference(dev->rx_handler_data))
+
+void bond_queue_slave_event(struct slave *slave);
+
+struct bond_vlan_tag {
+	__be16		vlan_proto;
+	unsigned short	vlan_id;
+};
+
+/**
+ * Returns NULL if the net_device does not belong to any of the bond's slaves
+ *
+ * Caller must hold bond lock for read
+ */
+static inline struct slave *bond_get_slave_by_dev(struct bonding *bond,
+						  struct net_device *slave_dev)
+{
+	return netdev_lower_dev_get_private(bond->dev, slave_dev);
+}
+
+static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
+{
+	return slave->bond;
+}
+
+static inline bool bond_should_override_tx_queue(struct bonding *bond)
+{
+	return BOND_MODE(bond) == BOND_MODE_ACTIVEBACKUP ||
+	       BOND_MODE(bond) == BOND_MODE_ROUNDROBIN;
+}
+
+static inline bool bond_is_lb(const struct bonding *bond)
+{
+	return BOND_MODE(bond) == BOND_MODE_TLB ||
+	       BOND_MODE(bond) == BOND_MODE_ALB;
+}
+
+static inline bool bond_is_nondyn_tlb(const struct bonding *bond)
+{
+	return (BOND_MODE(bond) == BOND_MODE_TLB)  &&
+	       (bond->params.tlb_dynamic_lb == 0);
+}
+
+static inline bool bond_mode_uses_xmit_hash(const struct bonding *bond)
+{
+	return (BOND_MODE(bond) == BOND_MODE_8023AD ||
+		BOND_MODE(bond) == BOND_MODE_XOR ||
+		bond_is_nondyn_tlb(bond));
+}
+
+static inline bool bond_mode_uses_arp(int mode)
+{
+	return mode != BOND_MODE_8023AD && mode != BOND_MODE_TLB &&
+	       mode != BOND_MODE_ALB;
+}
+
+static inline bool bond_mode_uses_primary(int mode)
+{
+	return mode == BOND_MODE_ACTIVEBACKUP || mode == BOND_MODE_TLB ||
+	       mode == BOND_MODE_ALB;
+}
+
+static inline bool bond_uses_primary(struct bonding *bond)
+{
+	return bond_mode_uses_primary(BOND_MODE(bond));
+}
+
+static inline bool bond_slave_is_up(struct slave *slave)
+{
+	return netif_running(slave->dev) && netif_carrier_ok(slave->dev);
+}
+
+static inline void bond_set_active_slave(struct slave *slave)
+{
+	if (slave->backup) {
+		slave->backup = 0;
+		bond_queue_slave_event(slave);
+		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_ATOMIC);
+	}
+}
+
+static inline void bond_set_backup_slave(struct slave *slave)
+{
+	if (!slave->backup) {
+		slave->backup = 1;
+		bond_queue_slave_event(slave);
+		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_ATOMIC);
+	}
+}
+
+static inline void bond_set_slave_state(struct slave *slave,
+					int slave_state, bool notify)
+{
+	if (slave->backup == slave_state)
+		return;
+
+	slave->backup = slave_state;
+	if (notify) {
+		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_ATOMIC);
+		bond_queue_slave_event(slave);
+		slave->should_notify = 0;
+	} else {
+		if (slave->should_notify)
+			slave->should_notify = 0;
+		else
+			slave->should_notify = 1;
+	}
+}
+
+static inline void bond_slave_state_change(struct bonding *bond)
+{
+	struct list_head *iter;
+	struct slave *tmp;
+
+	bond_for_each_slave(bond, tmp, iter) {
+		if (tmp->link == BOND_LINK_UP)
+			bond_set_active_slave(tmp);
+		else if (tmp->link == BOND_LINK_DOWN)
+			bond_set_backup_slave(tmp);
+	}
+}
+
+static inline void bond_slave_state_notify(struct bonding *bond)
+{
+	struct list_head *iter;
+	struct slave *tmp;
+
+	bond_for_each_slave(bond, tmp, iter) {
+		if (tmp->should_notify) {
+			rtmsg_ifinfo(RTM_NEWLINK, tmp->dev, 0, GFP_ATOMIC);
+			tmp->should_notify = 0;
+		}
+	}
+}
+
+static inline int bond_slave_state(struct slave *slave)
+{
+	return slave->backup;
+}
+
+static inline bool bond_is_active_slave(struct slave *slave)
+{
+	return !bond_slave_state(slave);
+}
+
+static inline bool bond_slave_can_tx(struct slave *slave)
+{
+	return bond_slave_is_up(slave) && slave->link == BOND_LINK_UP &&
+	       bond_is_active_slave(slave);
+}
+
+#define BOND_PRI_RESELECT_ALWAYS	0
+#define BOND_PRI_RESELECT_BETTER	1
+#define BOND_PRI_RESELECT_FAILURE	2
+
+#define BOND_FOM_NONE			0
+#define BOND_FOM_ACTIVE			1
+#define BOND_FOM_FOLLOW			2
+
+#define BOND_ARP_TARGETS_ANY		0
+#define BOND_ARP_TARGETS_ALL		1
+
+#define BOND_ARP_VALIDATE_NONE		0
+#define BOND_ARP_VALIDATE_ACTIVE	(1 << BOND_STATE_ACTIVE)
+#define BOND_ARP_VALIDATE_BACKUP	(1 << BOND_STATE_BACKUP)
+#define BOND_ARP_VALIDATE_ALL		(BOND_ARP_VALIDATE_ACTIVE | \
+					 BOND_ARP_VALIDATE_BACKUP)
+#define BOND_ARP_FILTER			(BOND_ARP_VALIDATE_ALL + 1)
+#define BOND_ARP_FILTER_ACTIVE		(BOND_ARP_VALIDATE_ACTIVE | \
+					 BOND_ARP_FILTER)
+#define BOND_ARP_FILTER_BACKUP		(BOND_ARP_VALIDATE_BACKUP | \
+					 BOND_ARP_FILTER)
+
+#define BOND_SLAVE_NOTIFY_NOW		true
+#define BOND_SLAVE_NOTIFY_LATER		false
+
+static inline int slave_do_arp_validate(struct bonding *bond,
+					struct slave *slave)
+{
+	return bond->params.arp_validate & (1 << bond_slave_state(slave));
+}
+
+static inline int slave_do_arp_validate_only(struct bonding *bond)
+{
+	return bond->params.arp_validate & BOND_ARP_FILTER;
+}
+
+static inline int bond_is_ip_target_ok(__be32 addr)
+{
+	return !ipv4_is_lbcast(addr) && !ipv4_is_zeronet(addr);
+}
+
+/* Get the oldest arp which we've received on this slave for bond's
+ * arp_targets.
+ */
+static inline unsigned long slave_oldest_target_arp_rx(struct bonding *bond,
+						       struct slave *slave)
+{
+	int i = 1;
+	unsigned long ret = slave->target_last_arp_rx[0];
+
+	for (; (i < BOND_MAX_ARP_TARGETS) && bond->params.arp_targets[i]; i++)
+		if (time_before(slave->target_last_arp_rx[i], ret))
+			ret = slave->target_last_arp_rx[i];
+
+	return ret;
+}
+
+static inline unsigned long slave_last_rx(struct bonding *bond,
+					struct slave *slave)
+{
+	if (bond->params.arp_all_targets == BOND_ARP_TARGETS_ALL)
+		return slave_oldest_target_arp_rx(bond, slave);
+
+	return slave->last_rx;
+}
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static inline void bond_netpoll_send_skb(const struct slave *slave,
+					 struct sk_buff *skb)
+{
+	struct netpoll *np = slave->np;
+
+	if (np)
+		netpoll_send_skb(np, skb);
+}
+#else
+static inline void bond_netpoll_send_skb(const struct slave *slave,
+					 struct sk_buff *skb)
+{
+}
+#endif
+
+static inline void bond_set_slave_inactive_flags(struct slave *slave,
+						 bool notify)
+{
+	if (!bond_is_lb(slave->bond))
+		bond_set_slave_state(slave, BOND_STATE_BACKUP, notify);
+	if (!slave->bond->params.all_slaves_active)
+		slave->inactive = 1;
+}
+
+static inline void bond_set_slave_active_flags(struct slave *slave,
+					       bool notify)
+{
+	bond_set_slave_state(slave, BOND_STATE_ACTIVE, notify);
+	slave->inactive = 0;
+}
+
+static inline bool bond_is_slave_inactive(struct slave *slave)
+{
+	return slave->inactive;
+}
+
+static inline void bond_set_slave_link_state(struct slave *slave, int state)
+{
+	slave->link = state;
+	bond_queue_slave_event(slave);
+}
+
+static inline __be32 bond_confirm_addr(struct net_device *dev, __be32 dst, __be32 local)
+{
+	struct in_device *in_dev;
+	__be32 addr = 0;
+
+	rcu_read_lock();
+	in_dev = __in_dev_get_rcu(dev);
+
+	if (in_dev)
+		addr = inet_confirm_addr(dev_net(dev), in_dev, dst, local,
+					 RT_SCOPE_HOST);
+	rcu_read_unlock();
+	return addr;
+}
+
+struct bond_net {
+	struct net		*net;	/* Associated network namespace */
+	struct list_head	dev_list;
+#ifdef CONFIG_PROC_FS
+	struct proc_dir_entry	*proc_dir;
+#endif
+	struct class_attribute	class_attr_bonding_masters;
+};
+
+int bond_arp_rcv(const struct sk_buff *skb, struct bonding *bond, struct slave *slave);
+void bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb, struct net_device *slave_dev);
+int bond_create(struct net *net, const char *name);
+int bond_create_sysfs(struct bond_net *net);
+void bond_destroy_sysfs(struct bond_net *net);
+void bond_prepare_sysfs_group(struct bonding *bond);
+int bond_sysfs_slave_add(struct slave *slave);
+void bond_sysfs_slave_del(struct slave *slave);
+int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
+int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
+u32 bond_xmit_hash(struct bonding *bond, struct sk_buff *skb);
+int bond_set_carrier(struct bonding *bond);
+void bond_select_active_slave(struct bonding *bond);
+void bond_change_active_slave(struct bonding *bond, struct slave *new_active);
+void bond_create_debugfs(void);
+void bond_destroy_debugfs(void);
+void bond_debug_register(struct bonding *bond);
+void bond_debug_unregister(struct bonding *bond);
+void bond_debug_reregister(struct bonding *bond);
+const char *bond_mode_name(int mode);
+void bond_setup(struct net_device *bond_dev);
+unsigned int bond_get_num_tx_queues(void);
+int bond_netlink_init(void);
+void bond_netlink_fini(void);
+struct net_device *bond_option_active_slave_get_rcu(struct bonding *bond);
+const char *bond_slave_link_status(s8 link);
+struct bond_vlan_tag *bond_verify_device_path(struct net_device *start_dev,
+					      struct net_device *end_dev,
+					      int level);
+int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave);
+void bond_slave_arr_work_rearm(struct bonding *bond, unsigned long delay);
+
+#ifdef CONFIG_PROC_FS
+void bond_create_proc_entry(struct bonding *bond);
+void bond_remove_proc_entry(struct bonding *bond);
+void bond_create_proc_dir(struct bond_net *bn);
+void bond_destroy_proc_dir(struct bond_net *bn);
+#else
+static inline void bond_create_proc_entry(struct bonding *bond)
+{
+}
+
+static inline void bond_remove_proc_entry(struct bonding *bond)
+{
+}
+
+static inline void bond_create_proc_dir(struct bond_net *bn)
+{
+}
+
+static inline void bond_destroy_proc_dir(struct bond_net *bn)
+{
+}
+#endif
+
+static inline struct slave *bond_slave_has_mac(struct bonding *bond,
+					       const u8 *mac)
+{
+	struct list_head *iter;
+	struct slave *tmp;
+
+	bond_for_each_slave(bond, tmp, iter)
+		if (ether_addr_equal_64bits(mac, tmp->dev->dev_addr))
+			return tmp;
+
+	return NULL;
+}
+
+/* Caller must hold rcu_read_lock() for read */
+static inline struct slave *bond_slave_has_mac_rcu(struct bonding *bond,
+					       const u8 *mac)
+{
+	struct list_head *iter;
+	struct slave *tmp;
+
+	bond_for_each_slave_rcu(bond, tmp, iter)
+		if (ether_addr_equal_64bits(mac, tmp->dev->dev_addr))
+			return tmp;
+
+	return NULL;
+}
+
+/* Caller must hold rcu_read_lock() for read */
+static inline bool bond_slave_has_mac_rx(struct bonding *bond, const u8 *mac)
+{
+	struct list_head *iter;
+	struct slave *tmp;
+	struct netdev_hw_addr *ha;
+
+	bond_for_each_slave_rcu(bond, tmp, iter)
+		if (ether_addr_equal_64bits(mac, tmp->dev->dev_addr))
+			return true;
+
+	if (netdev_uc_empty(bond->dev))
+		return false;
+
+	netdev_for_each_uc_addr(ha, bond->dev)
+		if (ether_addr_equal_64bits(mac, ha->addr))
+			return true;
+
+	return false;
+}
+
+/* Check if the ip is present in arp ip list, or first free slot if ip == 0
+ * Returns -1 if not found, index if found
+ */
+static inline int bond_get_targets_ip(__be32 *targets, __be32 ip)
+{
+	int i;
+
+	for (i = 0; i < BOND_MAX_ARP_TARGETS; i++)
+		if (targets[i] == ip)
+			return i;
+		else if (targets[i] == 0)
+			break;
+
+	return -1;
+}
+
+/* exported from bond_main.c */
+extern int bond_net_id;
+extern const struct bond_parm_tbl bond_lacp_tbl[];
+extern const struct bond_parm_tbl xmit_hashtype_tbl[];
+extern const struct bond_parm_tbl arp_validate_tbl[];
+extern const struct bond_parm_tbl arp_all_targets_tbl[];
+extern const struct bond_parm_tbl fail_over_mac_tbl[];
+extern const struct bond_parm_tbl pri_reselect_tbl[];
+extern struct bond_parm_tbl ad_select_tbl[];
+
+/* exported from bond_netlink.c */
+extern struct rtnl_link_ops bond_link_ops;
+
+static inline void bond_tx_drop(struct net_device *dev, struct sk_buff *skb)
+{
+	atomic_long_inc(&dev->tx_dropped);
+	dev_kfree_skb_any(skb);
+}
+
+#endif /* _NET_BONDING_H */
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  /*
+ * net busy poll support
+ * Copyright(c) 2013 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Author: Eliezer Tamir
+ *
+ * Contact Information:
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ */
+
+#ifndef _LINUX_NET_BUSY_POLL_H
+#define _LINUX_NET_BUSY_POLL_H
+
+#include <linux/netdevice.h>
+#include <net/ip.h>
+
+#ifdef CONFIG_NET_RX_BUSY_POLL
+
+struct napi_struct;
+extern unsigned int sysctl_net_busy_read __read_mostly;
+extern unsigned int sysctl_net_busy_poll __read_mostly;
+
+/* return values from ndo_ll_poll */
+#define LL_FLUSH_FAILED		-1
+#define LL_FLUSH_BUSY		-2
+
+static inline bool net_busy_loop_on(void)
+{
+	return sysctl_net_busy_poll;
+}
+
+static inline u64 busy_loop_us_clock(void)
+{
+	return local_clock() >> 10;
+}
+
+static inline unsigned long sk_busy_loop_end_time(struct sock *sk)
+{
+	return busy_loop_us_clock() + ACCESS_ONCE(sk->sk_ll_usec);
+}
+
+/* in poll/select we use the global sysctl_net_ll_poll value */
+static inline unsigned long busy_loop_end_time(void)
+{
+	return busy_loop_us_clock() + ACCESS_ONCE(sysctl_net_busy_poll);
+}
+
+static inline bool sk_can_busy_loop(struct sock *sk)
+{
+	return sk->sk_ll_usec && sk->sk_napi_id &&
+	       !need_resched() && !signal_pending(current);
+}
+
+
+static inline bool busy_loop_timeout(unsigned long end_time)
+{
+	unsigned long now = busy_loop_us_clock();
+
+	return time_after(now, end_time);
+}
+
+/* when used in sock_poll() nonblock is known at compile time to be true
+ * so the loop and end_time will be optimized out
+ */
+static inline bool sk_busy_loop(struct sock *sk, int nonblock)
+{
+	unsigned long end_time = !nonblock ? sk_busy_loop_end_time(sk) : 0;
+	const struct net_device_ops *ops;
+	struct napi_struct *napi;
+	int rc = false;
+
+	/*
+	 * rcu read lock for napi hash
+	 * bh so we don't race with net_rx_action
+	 */
+	rcu_read_lock_bh();
+
+	napi = napi_by_id(sk->sk_napi_id);
+	if (!napi)
+		goto out;
+
+	ops = napi->dev->netdev_ops;
+	if (!ops->ndo_busy_poll)
+		goto out;
+
+	do {
+		rc = ops->ndo_busy_poll(napi);
+
+		if (rc == LL_FLUSH_FAILED)
+			break; /* permanent failure */
+
+		if (rc > 0)
+			/* local bh are disabled so it is ok to use _BH */
+			NET_ADD_STATS_BH(sock_net(sk),
+					 LINUX_MIB_BUSYPOLLRXPACKETS, rc);
+		cpu_relax();
+
+	} while (!nonblock && skb_queue_empty(&sk->sk_receive_queue) &&
+		 !need_resched() && !busy_loop_timeout(end_time));
+
+	rc = !skb_queue_empty(&sk->sk_receive_queue);
+out:
+	rcu_read_unlock_bh();
+	return rc;
+}
+
+/* used in the NIC receive handler to mark the skb */
+static inline void skb_mark_napi_id(struct sk_buff *skb,
+				    struct napi_struct *napi)
+{
+	skb->napi_id = napi->napi_id;
+}
+
+/* used in the protocol hanlder to propagate the napi_id to the socket */
+static inline void sk_mark_napi_id(struct sock *sk, struct sk_buff *skb)
+{
+	sk->sk_napi_id = skb->napi_id;
+}
+
+#else /* CONFIG_NET_RX_BUSY_POLL */
+static inline unsigned long net_busy_loop_on(void)
+{
+	return 0;
+}
+
+static inline unsigned long busy_loop_end_time(void)
+{
+	return 0;
+}
+
+static inline bool sk_can_busy_loop(struct sock *sk)
+{
+	return false;
+}
+
+static inline void skb_mark_napi_id(struct sk_buff *skb,
+				    struct napi_struct *napi)
+{
+}
+
+static inline void sk_mark_napi_id(struct sock *sk, struct sk_buff *skb)
+{
+}
+
+static inline bool busy_loop_timeout(unsigned long end_time)
+{
+	return true;
+}
+
+static inline bool sk_busy_loop(struct sock *sk, int nonblock)
+{
+	return false;
+}
+
+#endif /* CONFIG_NET_RX_BUSY_POLL */
+#endif /* _LINUX_NET_BUSY_POLL_H */
+                           #ifndef __NET_CFG80211_WEXT_H
+#define __NET_CFG80211_WEXT_H
+/*
+ * 802.11 device and configuration interface -- wext handlers
+ *
+ * Copyright 2006-2010	Johannes Berg <johannes@sipsolutions.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+#include <linux/netdevice.h>
+#include <linux/wireless.h>
+#include <net/iw_handler.h>
+
+/*
+ * Temporary wext handlers & helper functions
+ *
+ * These are used only by drivers that aren't yet fully
+ * converted to cfg80211.
+ */
+int cfg80211_wext_giwname(struct net_device *dev,
+			  struct iw_request_info *info,
+			  char *name, char *extra);
+int cfg80211_wext_siwmode(struct net_device *dev, struct iw_request_info *info,
+			  u32 *mode, char *extra);
+int cfg80211_wext_giwmode(struct net_device *dev, struct iw_request_info *info,
+			  u32 *mode, char *extra);
+int cfg80211_wext_siwscan(struct net_device *dev,
+			  struct iw_request_info *info,
+			  union iwreq_data *wrqu, char *extra);
+int cfg80211_wext_giwscan(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_point *data, char *extra);
+int cfg80211_wext_giwrange(struct net_device *dev,
+			   struct iw_request_info *info,
+			   struct iw_point *data, char *extra);
+int cfg80211_wext_siwrts(struct net_device *dev,
+			 struct iw_request_info *info,
+			 struct iw_param *rts, char *extra);
+int cfg80211_wext_giwrts(struct net_device *dev,
+			 struct iw_request_info *info,
+			 struct iw_param *rts, char *extra);
+int cfg80211_wext_siwfrag(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *frag, char *extra);
+int cfg80211_wext_giwfrag(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *frag, char *extra);
+int cfg80211_wext_giwretry(struct net_device *dev,
+			   struct iw_request_info *info,
+			   struct iw_param *retry, char *extra);
+
+#endif /* __NET_CFG80211_WEXT_H */
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                #ifndef __NET_CFG80211_H
+#define __NET_CFG80211_H
+/*
+ * 802.11 device and configuration interface
+ *
+ * Copyright 2006-2010	Johannes Berg <johannes@sipsolutions.net>
+ * Copyright 2013-2014 Intel Mobile Communications GmbH
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+#include <linux/netdevice.h>
+#include <linux/debugfs.h>
+#include <linux/list.h>
+#include <linux/bug.h>
+#include <linux/netlink.h>
+#include <linux/skbuff.h>
+#include <linux/nl80211.h>
+#include <linux/if_ether.h>
+#include <linux/ieee80211.h>
+#include <linux/net.h>
+#include <net/regulatory.h>
+
+/**
+ * DOC: Introduction
+ *
+ * cfg80211 is the configuration API for 802.11 devices in Linux. It bridges
+ * userspace and drivers, and offers some utility functionality associated
+ * with 802.11. cfg80211 must, directly or indirectly via mac80211, be used
+ * by all modern wireless drivers in Linux, so that they offer a consistent
+ * API through nl80211. For backward compatibility, cfg80211 also offers
+ * wireless extensions to userspace, but hides them from drivers completely.
+ *
+ * Additionally, cfg80211 contains code to help enforce regulatory spectrum
+ * use restrictions.
+ */
+
+
+/**
+ * DOC: Device registration
+ *
+ * In order for a driver to use cfg80211, it must register the hardware device
+ * with cfg80211. This happens through a number of hardware capability structs
+ * described below.
+ *
+ * The fundamental structure for each device is the 'wiphy', of which each
+ * instance describes a physical wireless device connected to the system. Each
+ * such wiphy can have zero, one, or many virtual interfaces associated with
+ * it, which need to be identified as such by pointing the network interface's
+ * @ieee80211_ptr pointer to a &struct wireless_dev which further describes
+ * the wireless part of the interface, normally this struct is embedded in the
+ * network interface's private data area. Drivers can optionally allow creating
+ * or destroying virtual interfaces on the fly, but without at least one or the
+ * ability to create some the wireless device isn't useful.
+ *
+ * Each wiphy structure contains device capability information, and also has
+ * a pointer to the various operations the driver offers. The definitions and
+ * structures here describe these capabilities in detail.
+ */
+
+struct wiphy;
+
+/*
+ * wireless hardware capability structures
+ */
+
+/**
+ * enum ieee80211_band - supported frequency bands
+ *
+ * The bands are assigned this way because the supported
+ * bitrates differ in these bands.
+ *
+ * @IEEE80211_BAND_2GHZ: 2.4GHz ISM band
+ * @IEEE80211_BAND_5GHZ: around 5GHz band (4.9-5.7)
+ * @IEEE80211_BAND_60GHZ: around 60 GHz band (58.32 - 64.80 GHz)
+ * @IEEE80211_NUM_BANDS: number of defined bands
+ */
+enum ieee80211_band {
+	IEEE80211_BAND_2GHZ = NL80211_BAND_2GHZ,
+	IEEE80211_BAND_5GHZ = NL80211_BAND_5GHZ,
+	IEEE80211_BAND_60GHZ = NL80211_BAND_60GHZ,
+
+	/* keep last */
+	IEEE80211_NUM_BANDS
+};
+
+/**
+ * enum ieee80211_channel_flags - channel flags
+ *
+ * Channel flags set by the regulatory control code.
+ *
+ * @IEEE80211_CHAN_DISABLED: This channel is disabled.
+ * @IEEE80211_CHAN_NO_IR: do not initiate radiation, this includes
+ * 	sending probe requests or beaconing.
+ * @IEEE80211_CHAN_RADAR: Radar detection is required on this channel.
+ * @IEEE80211_CHAN_NO_HT40PLUS: extension channel above this channel
+ * 	is not permitted.
+ * @IEEE80211_CHAN_NO_HT40MINUS: extension channel below this channel
+ * 	is not permitted.
+ * @IEEE80211_CHAN_NO_OFDM: OFDM is not allowed on this channel.
+ * @IEEE80211_CHAN_NO_80MHZ: If the driver supports 80 MHz on the band,
+ *	this flag indicates that an 80 MHz channel cannot use this
+ *	channel as the control or any of the secondary channels.
+ *	This may be due to the driver or due to regulatory bandwidth
+ *	restrictions.
+ * @IEEE80211_CHAN_NO_160MHZ: If the driver supports 160 MHz on the band,
+ *	this flag indicates that an 160 MHz channel cannot use this
+ *	channel as the control or any of the secondary channels.
+ *	This may be due to the driver or due to regulatory bandwidth
+ *	restrictions.
+ * @IEEE80211_CHAN_INDOOR_ONLY: see %NL80211_FREQUENCY_ATTR_INDOOR_ONLY
+ * @IEEE80211_CHAN_IR_CONCURRENT: see %NL80211_FREQUENCY_ATTR_IR_CONCURRENT
+ * @IEEE80211_CHAN_NO_20MHZ: 20 MHz bandwidth is not permitted
+ *	on this channel.
+ * @IEEE80211_CHAN_NO_10MHZ: 10 MHz bandwidth is not permitted
+ *	on this channel.
+ *
+ */
+enum ieee80211_channel_flags {
+	IEEE80211_CHAN_DISABLED		= 1<<0,
+	IEEE80211_CHAN_NO_IR		= 1<<1,
+	/* hole at 1<<2 */
+	IEEE80211_CHAN_RADAR		= 1<<3,
+	IEEE80211_CHAN_NO_HT40PLUS	= 1<<4,
+	IEEE80211_CHAN_NO_HT40MINUS	= 1<<5,
+	IEEE80211_CHAN_NO_OFDM		= 1<<6,
+	IEEE80211_CHAN_NO_80MHZ		= 1<<7,
+	IEEE80211_CHAN_NO_160MHZ	= 1<<8,
+	IEEE80211_CHAN_INDOOR_ONLY	= 1<<9,
+	IEEE80211_CHAN_IR_CONCURRENT	= 1<<10,
+	IEEE80211_CHAN_NO_20MHZ		= 1<<11,
+	IEEE80211_CHAN_NO_10MHZ		= 1<<12,
+};
+
+#define IEEE80211_CHAN_NO_HT40 \
+	(IEEE80211_CHAN_NO_HT40PLUS | IEEE80211_CHAN_NO_HT40MINUS)
+
+#define IEEE80211_DFS_MIN_CAC_TIME_MS		60000
+#define IEEE80211_DFS_MIN_NOP_TIME_MS		(30 * 60 * 1000)
+
+/**
+ * struct ieee80211_channel - channel definition
+ *
+ * This structure describes a single channel for use
+ * with cfg80211.
+ *
+ * @center_freq: center frequency in MHz
+ * @hw_value: hardware-specific value for the channel
+ * @flags: channel flags from &enum ieee80211_channel_flags.
+ * @orig_flags: channel flags at registration time, used by regulatory
+ *	code to support devices with additional restrictions
+ * @band: band this channel belongs to.
+ * @max_antenna_gain: maximum antenna gain in dBi
+ * @max_power: maximum transmission power (in dBm)
+ * @max_reg_power: maximum regulatory transmission power (in dBm)
+ * @beacon_found: helper to regulatory code to indicate when a beacon
+ *	has been found on this channel. Use regulatory_hint_found_beacon()
+ *	to enable this, this is useful only on 5 GHz band.
+ * @orig_mag: internal use
+ * @orig_mpwr: internal use
+ * @dfs_state: current state of this channel. Only relevant if radar is required
+ *	on this channel.
+ * @dfs_state_entered: timestamp (jiffies) when the dfs state was entered.
+ * @dfs_cac_ms: DFS CAC time in milliseconds, this is valid for DFS channels.
+ */
+struct ieee80211_channel {
+	enum ieee80211_band band;
+	u16 center_freq;
+	u16 hw_value;
+	u32 flags;
+	int max_antenna_gain;
+	int max_power;
+	int max_reg_power;
+	bool beacon_found;
+	u32 orig_flags;
+	int orig_mag, orig_mpwr;
+	enum nl80211_dfs_state dfs_state;
+	unsigned long dfs_state_entered;
+	unsigned int dfs_cac_ms;
+};
+
+/**
+ * enum ieee80211_rate_flags - rate flags
+ *
+ * Hardware/specification flags for rates. These are structured
+ * in a way that allows using the same bitrate structure for
+ * different bands/PHY modes.
+ *
+ * @IEEE80211_RATE_SHORT_PREAMBLE: Hardware can send with short
+ *	preamble on this bitrate; only relevant in 2.4GHz band and
+ *	with CCK rates.
+ * @IEEE80211_RATE_MANDATORY_A: This bitrate is a mandatory rate
+ *	when used with 802.11a (on the 5 GHz band); filled by the
+ *	core code when registering the wiphy.
+ * @IEEE80211_RATE_MANDATORY_B: This bitrate is a mandatory rate
+ *	when used with 802.11b (on the 2.4 GHz band); filled by the
+ *	core code when registering the wiphy.
+ * @IEEE80211_RATE_MANDATORY_G: This bitrate is a mandatory rate
+ *	when used with 802.11g (on the 2.4 GHz band); filled by the
+ *	core code when registering the wiphy.
+ * @IEEE80211_RATE_ERP_G: This is an ERP rate in 802.11g mode.
+ * @IEEE80211_RATE_SUPPORTS_5MHZ: Rate can be used in 5 MHz mode
+ * @IEEE80211_RATE_SUPPORTS_10MHZ: Rate can be used in 10 MHz mode
+ */
+enum ieee80211_rate_flags {
+	IEEE80211_RATE_SHORT_PREAMBLE	= 1<<0,
+	IEEE80211_RATE_MANDATORY_A	= 1<<1,
+	IEEE80211_RATE_MANDATORY_B	= 1<<2,
+	IEEE80211_RATE_MANDATORY_G	= 1<<3,
+	IEEE80211_RATE_ERP_G		= 1<<4,
+	IEEE80211_RATE_SUPPORTS_5MHZ	= 1<<5,
+	IEEE80211_RATE_SUPPORTS_10MHZ	= 1<<6,
+};
+
+/**
+ * enum ieee80211_bss_type - BSS type filter
+ *
+ * @IEEE80211_BSS_TYPE_ESS: Infrastructure BSS
+ * @IEEE80211_BSS_TYPE_PBSS: Personal BSS
+ * @IEEE80211_BSS_TYPE_IBSS: Independent BSS
+ * @IEEE80211_BSS_TYPE_MBSS: Mesh BSS
+ * @IEEE80211_BSS_TYPE_ANY: Wildcard value for matching any BSS type
+ */
+enum ieee80211_bss_type {
+	IEEE80211_BSS_TYPE_ESS,
+	IEEE80211_BSS_TYPE_PBSS,
+	IEEE80211_BSS_TYPE_IBSS,
+	IEEE80211_BSS_TYPE_MBSS,
+	IEEE80211_BSS_TYPE_ANY
+};
+
+/**
+ * enum ieee80211_privacy - BSS privacy filter
+ *
+ * @IEEE80211_PRIVACY_ON: privacy bit set
+ * @IEEE80211_PRIVACY_OFF: privacy bit clear
+ * @IEEE80211_PRIVACY_ANY: Wildcard value for matching any privacy setting
+ */
+enum ieee80211_privacy {
+	IEEE80211_PRIVACY_ON,
+	IEEE80211_PRIVACY_OFF,
+	IEEE80211_PRIVACY_ANY
+};
+
+#define IEEE80211_PRIVACY(x)	\
+	((x) ? IEEE80211_PRIVACY_ON : IEEE80211_PRIVACY_OFF)
+
+/**
+ * struct ieee80211_rate - bitrate definition
+ *
+ * This structure describes a bitrate that an 802.11 PHY can
+ * operate with. The two values @hw_value and @hw_value_short
+ * are only for driver use when pointers to this structure are
+ * passed around.
+ *
+ * @flags: rate-specific flags
+ * @bitrate: bitrate in units of 100 Kbps
+ * @hw_value: driver/hardware value for this rate
+ * @hw_value_short: driver/hardware value for this rate when
+ *	short preamble is used
+ */
+struct ieee80211_rate {
+	u32 flags;
+	u16 bitrate;
+	u16 hw_value, hw_value_short;
+};
+
+/**
+ * struct ieee80211_sta_ht_cap - STA's HT capabilities
+ *
+ * This structure describes most essential parameters needed
+ * to describe 802.11n HT capabilities for an STA.
+ *
+ * @ht_supported: is HT supported by the STA
+ * @cap: HT capabilities map as described in 802.11n spec
+ * @ampdu_factor: Maximum A-MPDU length factor
+ * @ampdu_density: Minimum A-MPDU spacing
+ * @mcs: Supported MCS rates
+ */
+struct ieee80211_sta_ht_cap {
+	u16 cap; /* use IEEE80211_HT_CAP_ */
+	bool ht_supported;
+	u8 ampdu_factor;
+	u8 ampdu_density;
+	struct ieee80211_mcs_info mcs;
+};
+
+/**
+ * struct ieee80211_sta_vht_cap - STA's VHT capabilities
+ *
+ * This structure describes most essential parameters needed
+ * to describe 802.11ac VHT capabilities for an STA.
+ *
+ * @vht_supported: is VHT supported by the STA
+ * @cap: VHT capabilities map as described in 802.11ac spec
+ * @vht_mcs: Supported VHT MCS rates
+ */
+struct ieee80211_sta_vht_cap {
+	bool vht_supported;
+	u32 cap; /* use IEEE80211_VHT_CAP_ */
+	struct ieee80211_vht_mcs_info vht_mcs;
+};
+
+/**
+ * struct ieee80211_supported_band - frequency band definition
+ *
+ * This structure describes a frequency band a wiphy
+ * is able to operate in.
+ *
+ * @channels: Array of channels the hardware can operate in
+ *	in this band.
+ * @band: the band this structure represents
+ * @n_channels: Number of channels in @channels
+ * @bitrates: Array of bitrates the hardware can operate with
+ *	in this band. Must be sorted to give a valid "supported
+ *	rates" IE, i.e. CCK rates first, then OFDM.
+ * @n_bitrates: Number of bitrates in @bitrates
+ * @ht_cap: HT capabilities in this band
+ * @vht_cap: VHT capabilities in this band
+ */
+struct ieee80211_supported_band {
+	struct ieee80211_channel *channels;
+	struct ieee80211_rate *bitrates;
+	enum ieee80211_band band;
+	int n_channels;
+	int n_bitrates;
+	struct ieee80211_sta_ht_cap ht_cap;
+	struct ieee80211_sta_vht_cap vht_cap;
+};
+
+/*
+ * Wireless hardware/device configuration structures and methods
+ */
+
+/**
+ * DOC: Actions and configuration
+ *
+ * Each wireless device and each virtual interface offer a set of configuration
+ * operations and other actions that are invoked by userspace. Each of these
+ * actions is described in the operations structure, and the parameters these
+ * operations use are described separately.
+ *
+ * Additionally, some operations are asynchronous and expect to get status
+ * information via some functions that drivers need to call.
+ *
+ * Scanning and BSS list handling with its associated functionality is described
+ * in a separate chapter.
+ */
+
+/**
+ * struct vif_params - describes virtual interface parameters
+ * @use_4addr: use 4-address frames
+ * @macaddr: address to use for this virtual interface.
+ *	If this parameter is set to zero address the driver may
+ *	determine the address as needed.
+ *	This feature is only fully supported by drivers that enable the
+ *	%NL80211_FEATURE_MAC_ON_CREATE flag.  Others may support creating
+ **	only p2p devices with specified MAC.
+ */
+struct vif_params {
+       int use_4addr;
+       u8 macaddr[ETH_ALEN];
+};
+
+/**
+ * struct key_params - key information
+ *
+ * Information about a key
+ *
+ * @key: key material
+ * @key_len: length of key material
+ * @cipher: cipher suite selector
+ * @seq: sequence counter (IV/PN) for TKIP and CCMP keys, only used
+ *	with the get_key() callback, must be in little endian,
+ *	length given by @seq_len.
+ * @seq_len: length of @seq.
+ */
+struct key_params {
+	const u8 *key;
+	const u8 *seq;
+	int key_len;
+	int seq_len;
+	u32 cipher;
+};
+
+/**
+ * struct cfg80211_chan_def - channel definition
+ * @chan: the (control) channel
+ * @width: channel width
+ * @center_freq1: center frequency of first segment
+ * @center_freq2: center frequency of second segment
+ *	(only with 80+80 MHz)
+ */
+struct cfg80211_chan_def {
+	struct ieee80211_channel *chan;
+	enum nl80211_chan_width width;
+	u32 center_freq1;
+	u32 center_freq2;
+};
+
+/**
+ * cfg80211_get_chandef_type - return old channel type from chandef
+ * @chandef: the channel definition
+ *
+ * Return: The old channel type (NOHT, HT20, HT40+/-) from a given
+ * chandef, which must have a bandwidth allowing this conversion.
+ */
+static inline enum nl80211_channel_type
+cfg80211_get_chandef_type(const struct cfg80211_chan_def *chandef)
+{
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_20_NOHT:
+		return NL80211_CHAN_NO_HT;
+	case NL80211_CHAN_WIDTH_20:
+		return NL80211_CHAN_HT20;
+	case NL80211_CHAN_WIDTH_40:
+		if (chandef->center_freq1 > chandef->chan->center_freq)
+			return NL80211_CHAN_HT40PLUS;
+		return NL80211_CHAN_HT40MINUS;
+	default:
+		WARN_ON(1);
+		return NL80211_CHAN_NO_HT;
+	}
+}
+
+/**
+ * cfg80211_chandef_create - create channel definition using channel type
+ * @chandef: the channel definition struct to fill
+ * @channel: the control channel
+ * @chantype: the channel type
+ *
+ * Given a channel type, create a channel definition.
+ */
+void cfg80211_chandef_create(struct cfg80211_chan_def *chandef,
+			     struct ieee80211_channel *channel,
+			     enum nl80211_channel_type chantype);
+
+/**
+ * cfg80211_chandef_identical - check if two channel definitions are identical
+ * @chandef1: first channel definition
+ * @chandef2: second channel definition
+ *
+ * Return: %true if the channels defined by the channel definitions are
+ * identical, %false otherwise.
+ */
+static inline bool
+cfg80211_chandef_identical(const struct cfg80211_chan_def *chandef1,
+			   const struct cfg80211_chan_def *chandef2)
+{
+	return (chandef1->chan == chandef2->chan &&
+		chandef1->width == chandef2->width &&
+		chandef1->center_freq1 == chandef2->center_freq1 &&
+		chandef1->center_freq2 == chandef2->center_freq2);
+}
+
+/**
+ * cfg80211_chandef_compatible - check if two channel definitions are compatible
+ * @chandef1: first channel definition
+ * @chandef2: second channel definition
+ *
+ * Return: %NULL if the given channel definitions are incompatible,
+ * chandef1 or chandef2 otherwise.
+ */
+const struct cfg80211_chan_def *
+cfg80211_chandef_compatible(const struct cfg80211_chan_def *chandef1,
+			    const struct cfg80211_chan_def *chandef2);
+
+/**
+ * cfg80211_chandef_valid - check if a channel definition is valid
+ * @chandef: the channel definition to check
+ * Return: %true if the channel definition is valid. %false otherwise.
+ */
+bool cfg80211_chandef_valid(const struct cfg80211_chan_def *chandef);
+
+/**
+ * cfg80211_chandef_usable - check if secondary channels can be used
+ * @wiphy: the wiphy to validate against
+ * @chandef: the channel definition to check
+ * @prohibited_flags: the regulatory channel flags that must not be set
+ * Return: %true if secondary channels are usable. %false otherwise.
+ */
+bool cfg80211_chandef_usable(struct wiphy *wiphy,
+			     const struct cfg80211_chan_def *chandef,
+			     u32 prohibited_flags);
+
+/**
+ * cfg80211_chandef_dfs_required - checks if radar detection is required
+ * @wiphy: the wiphy to validate against
+ * @chandef: the channel definition to check
+ * @iftype: the interface type as specified in &enum nl80211_iftype
+ * Returns:
+ *	1 if radar detection is required, 0 if it is not, < 0 on error
+ */
+int cfg80211_chandef_dfs_required(struct wiphy *wiphy,
+				  const struct cfg80211_chan_def *chandef,
+				  enum nl80211_iftype iftype);
+
+/**
+ * ieee80211_chandef_rate_flags - returns rate flags for a channel
+ *
+ * In some channel types, not all rates may be used - for example CCK
+ * rates may not be used in 5/10 MHz channels.
+ *
+ * @chandef: channel definition for the channel
+ *
+ * Returns: rate flags which apply for this channel
+ */
+static inline enum ieee80211_rate_flags
+ieee80211_chandef_rate_flags(struct cfg80211_chan_def *chandef)
+{
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_5:
+		return IEEE80211_RATE_SUPPORTS_5MHZ;
+	case NL80211_CHAN_WIDTH_10:
+		return IEEE80211_RATE_SUPPORTS_10MHZ;
+	default:
+		break;
+	}
+	return 0;
+}
+
+/**
+ * ieee80211_chandef_max_power - maximum transmission power for the chandef
+ *
+ * In some regulations, the transmit power may depend on the configured channel
+ * bandwidth which may be defined as dBm/MHz. This function returns the actual
+ * max_power for non-standard (20 MHz) channels.
+ *
+ * @chandef: channel definition for the channel
+ *
+ * Returns: maximum allowed transmission power in dBm for the chandef
+ */
+static inline int
+ieee80211_chandef_max_power(struct cfg80211_chan_def *chandef)
+{
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_5:
+		return min(chandef->chan->max_reg_power - 6,
+			   chandef->chan->max_power);
+	case NL80211_CHAN_WIDTH_10:
+		return min(chandef->chan->max_reg_power - 3,
+			   chandef->chan->max_power);
+	default:
+		break;
+	}
+	return chandef->chan->max_power;
+}
+
+/**
+ * enum survey_info_flags - survey information flags
+ *
+ * @SURVEY_INFO_NOISE_DBM: noise (in dBm) was filled in
+ * @SURVEY_INFO_IN_USE: channel is currently being used
+ * @SURVEY_INFO_TIME: active time (in ms) was filled in
+ * @SURVEY_INFO_TIME_BUSY: busy time was filled in
+ * @SURVEY_INFO_TIME_EXT_BUSY: extension channel busy time was filled in
+ * @SURVEY_INFO_TIME_RX: receive time was filled in
+ * @SURVEY_INFO_TIME_TX: transmit time was filled in
+ * @SURVEY_INFO_TIME_SCAN: scan time was filled in
+ *
+ * Used by the driver to indicate which info in &struct survey_info
+ * it has filled in during the get_survey().
+ */
+enum survey_info_flags {
+	SURVEY_INFO_NOISE_DBM		= BIT(0),
+	SURVEY_INFO_IN_USE		= BIT(1),
+	SURVEY_INFO_TIME		= BIT(2),
+	SURVEY_INFO_TIME_BUSY		= BIT(3),
+	SURVEY_INFO_TIME_EXT_BUSY	= BIT(4),
+	SURVEY_INFO_TIME_RX		= BIT(5),
+	SURVEY_INFO_TIME_TX		= BIT(6),
+	SURVEY_INFO_TIME_SCAN		= BIT(7),
+};
+
+/**
+ * struct survey_info - channel survey response
+ *
+ * @channel: the channel this survey record reports, may be %NULL for a single
+ *	record to report global statistics
+ * @filled: bitflag of flags from &enum survey_info_flags
+ * @noise: channel noise in dBm. This and all following fields are
+ *	optional
+ * @time: amount of time in ms the radio was turn on (on the channel)
+ * @time_busy: amount of time the primary channel was sensed busy
+ * @time_ext_busy: amount of time the extension channel was sensed busy
+ * @time_rx: amount of time the radio spent receiving data
+ * @time_tx: amount of time the radio spent transmitting data
+ * @time_scan: amount of time the radio spent for scanning
+ *
+ * Used by dump_survey() to report back per-channel survey information.
+ *
+ * This structure can later be expanded with things like
+ * channel duty cycle etc.
+ */
+struct survey_info {
+	struct ieee80211_channel *channel;
+	u64 time;
+	u64 time_busy;
+	u64 time_ext_busy;
+	u64 time_rx;
+	u64 time_tx;
+	u64 time_scan;
+	u32 filled;
+	s8 noise;
+};
+
+/**
+ * struct cfg80211_crypto_settings - Crypto settings
+ * @wpa_versions: indicates which, if any, WPA versions are enabled
+ *	(from enum nl80211_wpa_versions)
+ * @cipher_group: group key cipher suite (or 0 if unset)
+ * @n_ciphers_pairwise: number of AP supported unicast ciphers
+ * @ciphers_pairwise: unicast key cipher suites
+ * @n_akm_suites: number of AKM suites
+ * @akm_suites: AKM suites
+ * @control_port: Whether user space controls IEEE 802.1X port, i.e.,
+ *	sets/clears %NL80211_STA_FLAG_AUTHORIZED. If true, the driver is
+ *	required to assume that the port is unauthorized until authorized by
+ *	user space. Otherwise, port is marked authorized by default.
+ * @control_port_ethertype: the control port protocol that should be
+ *	allowed through even on unauthorized ports
+ * @control_port_no_encrypt: TRUE to prevent encryption of control port
+ *	protocol frames.
+ */
+struct cfg80211_crypto_settings {
+	u32 wpa_versions;
+	u32 cipher_group;
+	int n_ciphers_pairwise;
+	u32 ciphers_pairwise[NL80211_MAX_NR_CIPHER_SUITES];
+	int n_akm_suites;
+	u32 akm_suites[NL80211_MAX_NR_AKM_SUITES];
+	bool control_port;
+	__be16 control_port_ethertype;
+	bool control_port_no_encrypt;
+};
+
+/**
+ * struct cfg80211_beacon_data - beacon data
+ * @head: head portion of beacon (before TIM IE)
+ *	or %NULL if not changed
+ * @tail: tail portion of beacon (after TIM IE)
+ *	or %NULL if not changed
+ * @head_len: length of @head
+ * @tail_len: length of @tail
+ * @beacon_ies: extra information element(s) to add into Beacon frames or %NULL
+ * @beacon_ies_len: length of beacon_ies in octets
+ * @proberesp_ies: extra information element(s) to add into Probe Response
+ *	frames or %NULL
+ * @proberesp_ies_len: length of proberesp_ies in octets
+ * @assocresp_ies: extra information element(s) to add into (Re)Association
+ *	Response frames or %NULL
+ * @assocresp_ies_len: length of assocresp_ies in octets
+ * @probe_resp_len: length of probe response template (@probe_resp)
+ * @probe_resp: probe response template (AP mode only)
+ */
+struct cfg80211_beacon_data {
+	const u8 *head, *tail;
+	const u8 *beacon_ies;
+	const u8 *proberesp_ies;
+	const u8 *assocresp_ies;
+	const u8 *probe_resp;
+
+	size_t head_len, tail_len;
+	size_t beacon_ies_len;
+	size_t proberesp_ies_len;
+	size_t assocresp_ies_len;
+	size_t probe_resp_len;
+};
+
+struct mac_address {
+	u8 addr[ETH_ALEN];
+};
+
+/**
+ * struct cfg80211_acl_data - Access control list data
+ *
+ * @acl_policy: ACL policy to be applied on the station's
+ *	entry specified by mac_addr
+ * @n_acl_entries: Number of MAC address entries passed
+ * @mac_addrs: List of MAC addresses of stations to be used for ACL
+ */
+struct cfg80211_acl_data {
+	enum nl80211_acl_policy acl_policy;
+	int n_acl_entries;
+
+	/* Keep it last */
+	struct mac_address mac_addrs[];
+};
+
+/**
+ * struct cfg80211_ap_settings - AP configuration
+ *
+ * Used to configure an AP interface.
+ *
+ * @chandef: defines the channel to use
+ * @beacon: beacon data
+ * @beacon_interval: beacon interval
+ * @dtim_period: DTIM period
+ * @ssid: SSID to be used in the BSS (note: may be %NULL if not provided from
+ *	user space)
+ * @ssid_len: length of @ssid
+ * @hidden_ssid: whether to hide the SSID in Beacon/Probe Response frames
+ * @crypto: crypto settings
+ * @privacy: the BSS uses privacy
+ * @auth_type: Authentication type (algorithm)
+ * @smps_mode: SMPS mode
+ * @inactivity_timeout: time in seconds to determine station's inactivity.
+ * @p2p_ctwindow: P2P CT Window
+ * @p2p_opp_ps: P2P opportunistic PS
+ * @acl: ACL configuration used by the drivers which has support for
+ *	MAC address based access control
+ */
+struct cfg80211_ap_settings {
+	struct cfg80211_chan_def chandef;
+
+	struct cfg80211_beacon_data beacon;
+
+	int beacon_interval, dtim_period;
+	const u8 *ssid;
+	size_t ssid_len;
+	enum nl80211_hidden_ssid hidden_ssid;
+	struct cfg80211_crypto_settings crypto;
+	bool privacy;
+	enum nl80211_auth_type auth_type;
+	enum nl80211_smps_mode smps_mode;
+	int inactivity_timeout;
+	u8 p2p_ctwindow;
+	bool p2p_opp_ps;
+	const struct cfg80211_acl_data *acl;
+};
+
+/**
+ * struct cfg80211_csa_settings - channel switch settings
+ *
+ * Used for channel switch
+ *
+ * @chandef: defines the channel to use after the switch
+ * @beacon_csa: beacon data while performing the switch
+ * @counter_offsets_beacon: offsets of the counters within the beacon (tail)
+ * @counter_offsets_presp: offsets of the counters within the probe response
+ * @n_counter_offsets_beacon: number of csa counters the beacon (tail)
+ * @n_counter_offsets_presp: number of csa counters in the probe response
+ * @beacon_after: beacon data to be used on the new channel
+ * @radar_required: whether radar detection is required on the new channel
+ * @block_tx: whether transmissions should be blocked while changing
+ * @count: number of beacons until switch
+ */
+struct cfg80211_csa_settings {
+	struct cfg80211_chan_def chandef;
+	struct cfg80211_beacon_data beacon_csa;
+	const u16 *counter_offsets_beacon;
+	const u16 *counter_offsets_presp;
+	unsigned int n_counter_offsets_beacon;
+	unsigned int n_counter_offsets_presp;
+	struct cfg80211_beacon_data beacon_after;
+	bool radar_required;
+	bool block_tx;
+	u8 count;
+};
+
+/**
+ * enum station_parameters_apply_mask - station parameter values to apply
+ * @STATION_PARAM_APPLY_UAPSD: apply new uAPSD parameters (uapsd_queues, max_sp)
+ * @STATION_PARAM_APPLY_CAPABILITY: apply new capability
+ * @STATION_PARAM_APPLY_PLINK_STATE: apply new plink state
+ *
+ * Not all station parameters have in-band "no change" signalling,
+ * for those that don't these flags will are used.
+ */
+enum station_parameters_apply_mask {
+	STATION_PARAM_APPLY_UAPSD = BIT(0),
+	STATION_PARAM_APPLY_CAPABILITY = BIT(1),
+	STATION_PARAM_APPLY_PLINK_STATE = BIT(2),
+};
+
+/**
+ * struct station_parameters - station parameters
+ *
+ * Used to change and create a new station.
+ *
+ * @vlan: vlan interface station should belong to
+ * @supported_rates: supported rates in IEEE 802.11 format
+ *	(or NULL for no change)
+ * @supported_rates_len: number of supported rates
+ * @sta_flags_mask: station flags that changed
+ *	(bitmask of BIT(NL80211_STA_FLAG_...))
+ * @sta_flags_set: station flags values
+ *	(bitmask of BIT(NL80211_STA_FLAG_...))
+ * @listen_interval: listen interval or -1 for no change
+ * @aid: AID or zero for no change
+ * @plink_action: plink action to take
+ * @plink_state: set the peer link state for a station
+ * @ht_capa: HT capabilities of station
+ * @vht_capa: VHT capabilities of station
+ * @uapsd_queues: bitmap of queues configured for uapsd. same format
+ *	as the AC bitmap in the QoS info field
+ * @max_sp: max Service Period. same format as the MAX_SP in the
+ *	QoS info field (but already shifted down)
+ * @sta_modify_mask: bitmap indicating which parameters changed
+ *	(for those that don't have a natural "no change" value),
+ *	see &enum station_parameters_apply_mask
+ * @local_pm: local link-specific mesh power save mode (no change when set
+ *	to unknown)
+ * @capability: station capability
+ * @ext_capab: extended capabilities of the station
+ * @ext_capab_len: number of extended capabilities
+ * @supported_channels: supported channels in IEEE 802.11 format
+ * @supported_channels_len: number of supported channels
+ * @supported_oper_classes: supported oper classes in IEEE 802.11 format
+ * @supported_oper_classes_len: number of supported operating classes
+ * @opmode_notif: operating mode field from Operating Mode Notification
+ * @opmode_notif_used: information if operating mode field is used
+ */
+struct station_parameters {
+	const u8 *supported_rates;
+	struct net_device *vlan;
+	u32 sta_flags_mask, sta_flags_set;
+	u32 sta_modify_mask;
+	int listen_interval;
+	u16 aid;
+	u8 supported_rates_len;
+	u8 plink_action;
+	u8 plink_state;
+	const struct ieee80211_ht_cap *ht_capa;
+	const struct ieee80211_vht_cap *vht_capa;
+	u8 uapsd_queues;
+	u8 max_sp;
+	enum nl80211_mesh_power_mode local_pm;
+	u16 capability;
+	const u8 *ext_capab;
+	u8 ext_capab_len;
+	const u8 *supported_channels;
+	u8 supported_channels_len;
+	const u8 *supported_oper_classes;
+	u8 supported_oper_classes_len;
+	u8 opmode_notif;
+	bool opmode_notif_used;
+};
+
+/**
+ * struct station_del_parameters - station deletion parameters
+ *
+ * Used to delete a station entry (or all stations).
+ *
+ * @mac: MAC address of the station to remove or NULL to remove all stations
+ * @subtype: Management frame subtype to use for indicating removal
+ *	(10 = Disassociation, 12 = Deauthentication)
+ * @reason_code: Reason code for the Disassociation/Deauthentication frame
+ */
+struct station_del_parameters {
+	const u8 *mac;
+	u8 subtype;
+	u16 reason_code;
+};
+
+/**
+ * enum cfg80211_station_type - the type of station being modified
+ * @CFG80211_STA_AP_CLIENT: client of an AP interface
+ * @CFG80211_STA_AP_MLME_CLIENT: client of an AP interface that has
+ *	the AP MLME in the device
+ * @CFG80211_STA_AP_STA: AP station on managed interface
+ * @CFG80211_STA_IBSS: IBSS station
+ * @CFG80211_STA_TDLS_PEER_SETUP: TDLS peer on managed interface (dummy entry
+ *	while TDLS setup is in progress, it moves out of this state when
+ *	being marked authorized; use this only if TDLS with external setup is
+ *	supported/used)
+ * @CFG80211_STA_TDLS_PEER_ACTIVE: TDLS peer on managed interface (active
+ *	entry that is operating, has been marked authorized by userspace)
+ * @CFG80211_STA_MESH_PEER_KERNEL: peer on mesh interface (kernel managed)
+ * @CFG80211_STA_MESH_PEER_USER: peer on mesh interface (user managed)
+ */
+enum cfg80211_station_type {
+	CFG80211_STA_AP_CLIENT,
+	CFG80211_STA_AP_MLME_CLIENT,
+	CFG80211_STA_AP_STA,
+	CFG80211_STA_IBSS,
+	CFG80211_STA_TDLS_PEER_SETUP,
+	CFG80211_STA_TDLS_PEER_ACTIVE,
+	CFG80211_STA_MESH_PEER_KERNEL,
+	CFG80211_STA_MESH_PEER_USER,
+};
+
+/**
+ * cfg80211_check_station_change - validate parameter changes
+ * @wiphy: the wiphy this operates on
+ * @params: the new parameters for a station
+ * @statype: the type of station being modified
+ *
+ * Utility function for the @change_station driver method. Call this function
+ * with the appropriate station type looking up the station (and checking that
+ * it exists). It will verify whether the station change is acceptable, and if
+ * not will return an error code. Note that it may modify the parameters for
+ * backward compatibility reasons, so don't use them before calling this.
+ */
+int cfg80211_check_station_change(struct wiphy *wiphy,
+				  struct station_parameters *params,
+				  enum cfg80211_station_type statype);
+
+/**
+ * enum station_info_rate_flags - bitrate info flags
+ *
+ * Used by the driver to indicate the specific rate transmission
+ * type for 802.11n transmissions.
+ *
+ * @RATE_INFO_FLAGS_MCS: mcs field filled with HT MCS
+ * @RATE_INFO_FLAGS_VHT_MCS: mcs field filled with VHT MCS
+ * @RATE_INFO_FLAGS_SHORT_GI: 400ns guard interval
+ * @RATE_INFO_FLAGS_60G: 60GHz MCS
+ */
+enum rate_info_flags {
+	RATE_INFO_FLAGS_MCS			= BIT(0),
+	RATE_INFO_FLAGS_VHT_MCS			= BIT(1),
+	RATE_INFO_FLAGS_SHORT_GI		= BIT(2),
+	RATE_INFO_FLAGS_60G			= BIT(3),
+};
+
+/**
+ * enum rate_info_bw - rate bandwidth information
+ *
+ * Used by the driver to indicate the rate bandwidth.
+ *
+ * @RATE_INFO_BW_5: 5 MHz bandwidth
+ * @RATE_INFO_BW_10: 10 MHz bandwidth
+ * @RATE_INFO_BW_20: 20 MHz bandwidth
+ * @RATE_INFO_BW_40: 40 MHz bandwidth
+ * @RATE_INFO_BW_80: 80 MHz bandwidth
+ * @RATE_INFO_BW_160: 160 MHz bandwidth
+ */
+enum rate_info_bw {
+	RATE_INFO_BW_5,
+	RATE_INFO_BW_10,
+	RATE_INFO_BW_20,
+	RATE_INFO_BW_40,
+	RATE_INFO_BW_80,
+	RATE_INFO_BW_160,
+};
+
+/**
+ * struct rate_info - bitrate information
+ *
+ * Information about a receiving or transmitting bitrate
+ *
+ * @flags: bitflag of flags from &enum rate_info_flags
+ * @mcs: mcs index if struct describes a 802.11n bitrate
+ * @legacy: bitrate in 100kbit/s for 802.11abg
+ * @nss: number of streams (VHT only)
+ * @bw: bandwidth (from &enum rate_info_bw)
+ */
+struct rate_info {
+	u8 flags;
+	u8 mcs;
+	u16 legacy;
+	u8 nss;
+	u8 bw;
+};
+
+/**
+ * enum station_info_rate_flags - bitrate info flags
+ *
+ * Used by the driver to indicate the specific rate transmission
+ * type for 802.11n transmissions.
+ *
+ * @BSS_PARAM_FLAGS_CTS_PROT: whether CTS protection is enabled
+ * @BSS_PARAM_FLAGS_SHORT_PREAMBLE: whether short preamble is enabled
+ * @BSS_PARAM_FLAGS_SHORT_SLOT_TIME: whether short slot time is enabled
+ */
+enum bss_param_flags {
+	BSS_PARAM_FLAGS_CTS_PROT	= 1<<0,
+	BSS_PARAM_FLAGS_SHORT_PREAMBLE	= 1<<1,
+	BSS_PARAM_FLAGS_SHORT_SLOT_TIME	= 1<<2,
+};
+
+/**
+ * struct sta_bss_parameters - BSS parameters for the attached station
+ *
+ * Information about the currently associated BSS
+ *
+ * @flags: bitflag of flags from &enum bss_param_flags
+ * @dtim_period: DTIM period for the BSS
+ * @beacon_interval: beacon interval
+ */
+struct sta_bss_parameters {
+	u8 flags;
+	u8 dtim_period;
+	u16 beacon_interval;
+};
+
+/**
+ * struct cfg80211_tid_stats - per-TID statistics
+ * @filled: bitmap of flags using the bits of &enum nl80211_tid_stats to
+ *	indicate the relevant values in this struct are filled
+ * @rx_msdu: number of received MSDUs
+ * @tx_msdu: number of (attempted) transmitted MSDUs
+ * @tx_msdu_retries: number of retries (not counting the first) for
+ *	transmitted MSDUs
+ * @tx_msdu_failed: number of failed transmitted MSDUs
+ */
+struct cfg80211_tid_stats {
+	u32 filled;
+	u64 rx_msdu;
+	u64 tx_msdu;
+	u64 tx_msdu_retries;
+	u64 tx_msdu_failed;
+};
+
+#define IEEE80211_MAX_CHAINS	4
+
+/**
+ * struct station_info - station information
+ *
+ * Station information filled by driver for get_station() and dump_station.
+ *
+ * @filled: bitflag of flags using the bits of &enum nl80211_sta_info to
+ *	indicate the relevant values in this struct for them
+ * @connected_time: time(in secs) since a station is last connected
+ * @inactive_time: time since last station activity (tx/rx) in milliseconds
+ * @rx_bytes: bytes (size of MPDUs) received from this station
+ * @tx_bytes: bytes (size of MPDUs) transmitted to this station
+ * @llid: mesh local link id
+ * @plid: mesh peer link id
+ * @plink_state: mesh peer link state
+ * @signal: The signal strength, type depends on the wiphy's signal_type.
+ *	For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
+ * @signal_avg: Average signal strength, type depends on the wiphy's signal_type.
+ *	For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
+ * @chains: bitmask for filled values in @chain_signal, @chain_signal_avg
+ * @chain_signal: per-chain signal strength of last received packet in dBm
+ * @chain_signal_avg: per-chain signal strength average in dBm
+ * @txrate: current unicast bitrate from this station
+ * @rxrate: current unicast bitrate to this station
+ * @rx_packets: packets (MSDUs & MMPDUs) received from this station
+ * @tx_packets: packets (MSDUs & MMPDUs) transmitted to this station
+ * @tx_retries: cumulative retry counts (MPDUs)
+ * @tx_failed: number of failed transmissions (MPDUs) (retries exceeded, no ACK)
+ * @rx_dropped_misc:  Dropped for un-specified reason.
+ * @bss_param: current BSS parameters
+ * @generation: generation number for nl80211 dumps.
+ *	This number should increase every time the list of stations
+ *	changes, i.e. when a station is added or removed, so that
+ *	userspace can tell whether it got a consistent snapshot.
+ * @assoc_req_ies: IEs from (Re)Association Request.
+ *	This is used only when in AP mode with drivers that do not use
+ *	user space MLME/SME implementation. The information is provided for
+ *	the cfg80211_new_sta() calls to notify user space of the IEs.
+ * @assoc_req_ies_len: Length of assoc_req_ies buffer in octets.
+ * @sta_flags: station flags mask & values
+ * @beacon_loss_count: Number of times beacon loss event has triggered.
+ * @t_offset: Time offset of the station relative to this host.
+ * @local_pm: local mesh STA power save mode
+ * @peer_pm: peer mesh STA power save mode
+ * @nonpeer_pm: non-peer mesh STA power save mode
+ * @expected_throughput: expected throughput in kbps (including 802.11 headers)
+ *	towards this station.
+ * @rx_beacon: number of beacons received from this peer
+ * @rx_beacon_signal_avg: signal strength average (in dBm) for beacons received
+ *	from this peer
+ * @pertid: per-TID statistics, see &struct cfg80211_tid_stats, using the last
+ *	(IEEE80211_NUM_TIDS) index for MSDUs not encapsulated in QoS-MPDUs.
+ */
+struct station_info {
+	u32 filled;
+	u32 connected_time;
+	u32 inactive_time;
+	u64 rx_bytes;
+	u64 tx_bytes;
+	u16 llid;
+	u16 plid;
+	u8 plink_state;
+	s8 signal;
+	s8 signal_avg;
+
+	u8 chains;
+	s8 chain_signal[IEEE80211_MAX_CHAINS];
+	s8 chain_signal_avg[IEEE80211_MAX_CHAINS];
+
+	struct rate_info txrate;
+	struct rate_info rxrate;
+	u32 rx_packets;
+	u32 tx_packets;
+	u32 tx_retries;
+	u32 tx_failed;
+	u32 rx_dropped_misc;
+	struct sta_bss_parameters bss_param;
+	struct nl80211_sta_flag_update sta_flags;
+
+	int generation;
+
+	const u8 *assoc_req_ies;
+	size_t assoc_req_ies_len;
+
+	u32 beacon_loss_count;
+	s64 t_offset;
+	enum nl80211_mesh_power_mode local_pm;
+	enum nl80211_mesh_power_mode peer_pm;
+	enum nl80211_mesh_power_mode nonpeer_pm;
+
+	u32 expected_throughput;
+
+	u64 rx_beacon;
+	u8 rx_beacon_signal_avg;
+	struct cfg80211_tid_stats pertid[IEEE80211_NUM_TIDS + 1];
+};
+
+/**
+ * cfg80211_get_station - retrieve information about a given station
+ * @dev: the device where the station is supposed to be connected to
+ * @mac_addr: the mac address of the station of interest
+ * @sinfo: pointer to the structure to fill with the information
+ *
+ * Returns 0 on success and sinfo is filled with the available information
+ * otherwise returns a negative error code and the content of sinfo has to be
+ * considered undefined.
+ */
+int cfg80211_get_station(struct net_device *dev, const u8 *mac_addr,
+			 struct station_info *sinfo);
+
+/**
+ * enum monitor_flags - monitor flags
+ *
+ * Monitor interface configuration flags. Note that these must be the bits
+ * according to the nl80211 flags.
+ *
+ * @MONITOR_FLAG_FCSFAIL: pass frames with bad FCS
+ * @MONITOR_FLAG_PLCPFAIL: pass frames with bad PLCP
+ * @MONITOR_FLAG_CONTROL: pass control frames
+ * @MONITOR_FLAG_OTHER_BSS: disable BSSID filtering
+ * @MONITOR_FLAG_COOK_FRAMES: report frames after processing
+ * @MONITOR_FLAG_ACTIVE: active monitor, ACKs frames on its MAC address
+ */
+enum monitor_flags {
+	MONITOR_FLAG_FCSFAIL		= 1<<NL80211_MNTR_FLAG_FCSFAIL,
+	MONITOR_FLAG_PLCPFAIL		= 1<<NL80211_MNTR_FLAG_PLCPFAIL,
+	MONITOR_FLAG_CONTROL		= 1<<NL80211_MNTR_FLAG_CONTROL,
+	MONITOR_FLAG_OTHER_BSS		= 1<<NL80211_MNTR_FLAG_OTHER_BSS,
+	MONITOR_FLAG_COOK_FRAMES	= 1<<NL80211_MNTR_FLAG_COOK_FRAMES,
+	MONITOR_FLAG_ACTIVE		= 1<<NL80211_MNTR_FLAG_ACTIVE,
+};
+
+/**
+ * enum mpath_info_flags -  mesh path information flags
+ *
+ * Used by the driver to indicate which info in &struct mpath_info it has filled
+ * in during get_station() or dump_station().
+ *
+ * @MPATH_INFO_FRAME_QLEN: @frame_qlen filled
+ * @MPATH_INFO_SN: @sn filled
+ * @MPATH_INFO_METRIC: @metric filled
+ * @MPATH_INFO_EXPTIME: @exptime filled
+ * @MPATH_INFO_DISCOVERY_TIMEOUT: @discovery_timeout filled
+ * @MPATH_INFO_DISCOVERY_RETRIES: @discovery_retries filled
+ * @MPATH_INFO_FLAGS: @flags filled
+ */
+enum mpath_info_flags {
+	MPATH_INFO_FRAME_QLEN		= BIT(0),
+	MPATH_INFO_SN			= BIT(1),
+	MPATH_INFO_METRIC		= BIT(2),
+	MPATH_INFO_EXPTIME		= BIT(3),
+	MPATH_INFO_DISCOVERY_TIMEOUT	= BIT(4),
+	MPATH_INFO_DISCOVERY_RETRIES	= BIT(5),
+	MPATH_INFO_FLAGS		= BIT(6),
+};
+
+/**
+ * struct mpath_info - mesh path information
+ *
+ * Mesh path information filled by driver for get_mpath() and dump_mpath().
+ *
+ * @filled: bitfield of flags from &enum mpath_info_flags
+ * @frame_qlen: number of queued frames for this destination
+ * @sn: target sequence number
+ * @metric: metric (cost) of this mesh path
+ * @exptime: expiration time for the mesh path from now, in msecs
+ * @flags: mesh path flags
+ * @discovery_timeout: total mesh path discovery timeout, in msecs
+ * @discovery_retries: mesh path discovery retries
+ * @generation: generation number for nl80211 dumps.
+ *	This number should increase every time the list of mesh paths
+ *	changes, i.e. when a station is added or removed, so that
+ *	userspace can tell whether it got a consistent snapshot.
+ */
+struct mpath_info {
+	u32 filled;
+	u32 frame_qlen;
+	u32 sn;
+	u32 metric;
+	u32 exptime;
+	u32 discovery_timeout;
+	u8 discovery_retries;
+	u8 flags;
+
+	int generation;
+};
+
+/**
+ * struct bss_parameters - BSS parameters
+ *
+ * Used to change BSS parameters (mainly for AP mode).
+ *
+ * @use_cts_prot: Whether to use CTS protection
+ *	(0 = no, 1 = yes, -1 = do not change)
+ * @use_short_preamble: Whether the use of short preambles is allowed
+ *	(0 = no, 1 = yes, -1 = do not change)
+ * @use_short_slot_time: Whether the use of short slot time is allowed
+ *	(0 = no, 1 = yes, -1 = do not change)
+ * @basic_rates: basic rates in IEEE 802.11 format
+ *	(or NULL for no change)
+ * @basic_rates_len: number of basic rates
+ * @ap_isolate: do not forward packets between connected stations
+ * @ht_opmode: HT Operation mode
+ * 	(u16 = opmode, -1 = do not change)
+ * @p2p_ctwindow: P2P CT Window (-1 = no change)
+ * @p2p_opp_ps: P2P opportunistic PS (-1 = no change)
+ */
+struct bss_parameters {
+	int use_cts_prot;
+	int use_short_preamble;
+	int use_short_slot_time;
+	const u8 *basic_rates;
+	u8 basic_rates_len;
+	int ap_isolate;
+	int ht_opmode;
+	s8 p2p_ctwindow, p2p_opp_ps;
+};
+
+/**
+ * struct mesh_config - 802.11s mesh configuration
+ *
+ * These parameters can be changed while the mesh is active.
+ *
+ * @dot11MeshRetryTimeout: the initial retry timeout in millisecond units used
+ *	by the Mesh Peering Open message
+ * @dot11MeshConfirmTimeout: the initial retry timeout in millisecond units
+ *	used by the Mesh Peering Open message
+ * @dot11MeshHoldingTimeout: the confirm timeout in millisecond units used by
+ *	the mesh peering management to close a mesh peering
+ * @dot11MeshMaxPeerLinks: the maximum number of peer links allowed on this
+ *	mesh interface
+ * @dot11MeshMaxRetries: the maximum number of peer link open retries that can
+ *	be sent to establish a new peer link instance in a mesh
+ * @dot11MeshTTL: the value of TTL field set at a source mesh STA
+ * @element_ttl: the value of TTL field set at a mesh STA for path selection
+ *	elements
+ * @auto_open_plinks: whether we should automatically open peer links when we
+ *	detect compatible mesh peers
+ * @dot11MeshNbrOffsetMaxNeighbor: the maximum number of neighbors to
+ *	synchronize to for 11s default synchronization method
+ * @dot11MeshHWMPmaxPREQretries: the number of action frames containing a PREQ
+ *	that an originator mesh STA can send to a particular path target
+ * @path_refresh_time: how frequently to refresh mesh paths in milliseconds
+ * @min_discovery_timeout: the minimum length of time to wait until giving up on
+ *	a path discovery in milliseconds
+ * @dot11MeshHWMPactivePathTimeout: the time (in TUs) for which mesh STAs
+ *	receiving a PREQ shall consider the forwarding information from the
+ *	root to be valid. (TU = time unit)
+ * @dot11MeshHWMPpreqMinInterval: the minimum interval of time (in TUs) during
+ *	which a mesh STA can send only one action frame containing a PREQ
+ *	element
+ * @dot11MeshHWMPperrMinInterval: the minimum interval of time (in TUs) during
+ *	which a mesh STA can send only one Action frame containing a PERR
+ *	element
+ * @dot11MeshHWMPnetDiameterTraversalTime: the interval of time (in TUs) that
+ *	it takes for an HWMP information element to propagate across the mesh
+ * @dot11MeshHWMPRootMode: the configuration of a mesh STA as root mesh STA
+ * @dot11MeshHWMPRannInterval: the interval of time (in TUs) between root
+ *	announcements are transmitted
+ * @dot11MeshGateAnnouncementProtocol: whether to advertise that this mesh
+ *	station has access to a broader network beyond the MBSS. (This is
+ *	missnamed in draft 12.0: dot11MeshGateAnnouncementProtocol set to true
+ *	only means that the station will announce others it's a mesh gate, but
+ *	not necessarily using the gate announcement protocol. Still keeping the
+ *	same nomenclature to be in sync with the spec)
+ * @dot11MeshForwarding: whether the Mesh STA is forwarding or non-forwarding
+ *	entity (default is TRUE - forwarding entity)
+ * @rssi_threshold: the threshold for average signal strength of candidate
+ *	station to establish a peer link
+ * @ht_opmode: mesh HT protection mode
+ *
+ * @dot11MeshHWMPactivePathToRootTimeout: The time (in TUs) for which mesh STAs
+ *	receiving a proactive PREQ shall consider the forwarding information to
+ *	the root mesh STA to be valid.
+ *
+ * @dot11MeshHWMProotInterval: The interval of time (in TUs) between proactive
+ *	PREQs are transmitted.
+ * @dot11MeshHWMPconfirmationInterval: The minimum interval of time (in TUs)
+ *	during which a mesh STA can send only one Action frame containing
+ *	a PREQ element for root path confirmation.
+ * @power_mode: The default mesh power save mode which will be the initial
+ *	setting for new peer links.
+ * @dot11MeshAwakeWindowDuration: The duration in TUs the STA will remain awake
+ *	after transmitting its beacon.
+ * @plink_timeout: If no tx activity is seen from a STA we've established
+ *	peering with for longer than this time (in seconds), then remove it
+ *	from the STA's list of peers.  Default is 30 minutes.
+ */
+struct mesh_config {
+	u16 dot11MeshRetryTimeout;
+	u16 dot11MeshConfirmTimeout;
+	u16 dot11MeshHoldingTimeout;
+	u16 dot11MeshMaxPeerLinks;
+	u8 dot11MeshMaxRetries;
+	u8 dot11MeshTTL;
+	u8 element_ttl;
+	bool auto_open_plinks;
+	u32 dot11MeshNbrOffsetMaxNeighbor;
+	u8 dot11MeshHWMPmaxPREQretries;
+	u32 path_refresh_time;
+	u16 min_discovery_timeout;
+	u32 dot11MeshHWMPactivePathTimeout;
+	u16 dot11MeshHWMPpreqMinInterval;
+	u16 dot11MeshHWMPperrMinInterval;
+	u16 dot11MeshHWMPnetDiameterTraversalTime;
+	u8 dot11MeshHWMPRootMode;
+	u16 dot11MeshHWMPRannInterval;
+	bool dot11MeshGateAnnouncementProtocol;
+	bool dot11MeshForwarding;
+	s32 rssi_threshold;
+	u16 ht_opmode;
+	u32 dot11MeshHWMPactivePathToRootTimeout;
+	u16 dot11MeshHWMProotInterval;
+	u16 dot11MeshHWMPconfirmationInterval;
+	enum nl80211_mesh_power_mode power_mode;
+	u16 dot11MeshAwakeWindowDuration;
+	u32 plink_timeout;
+};
+
+/**
+ * struct mesh_setup - 802.11s mesh setup configuration
+ * @chandef: defines the channel to use
+ * @mesh_id: the mesh ID
+ * @mesh_id_len: length of the mesh ID, at least 1 and at most 32 bytes
+ * @sync_method: which synchronization method to use
+ * @path_sel_proto: which path selection protocol to use
+ * @path_metric: which metric to use
+ * @auth_id: which authentication method this mesh is using
+ * @ie: vendor information elements (optional)
+ * @ie_len: length of vendor information elements
+ * @is_authenticated: this mesh requires authentication
+ * @is_secure: this mesh uses security
+ * @user_mpm: userspace handles all MPM functions
+ * @dtim_period: DTIM period to use
+ * @beacon_interval: beacon interval to use
+ * @mcast_rate: multicat rate for Mesh Node [6Mbps is the default for 802.11a]
+ * @basic_rates: basic rates to use when creating the mesh
+ *
+ * These parameters are fixed when the mesh is created.
+ */
+struct mesh_setup {
+	struct cfg80211_chan_def chandef;
+	const u8 *mesh_id;
+	u8 mesh_id_len;
+	u8 sync_method;
+	u8 path_sel_proto;
+	u8 path_metric;
+	u8 auth_id;
+	const u8 *ie;
+	u8 ie_len;
+	bool is_authenticated;
+	bool is_secure;
+	bool user_mpm;
+	u8 dtim_period;
+	u16 beacon_interval;
+	int mcast_rate[IEEE80211_NUM_BANDS];
+	u32 basic_rates;
+};
+
+/**
+ * struct ocb_setup - 802.11p OCB mode setup configuration
+ * @chandef: defines the channel to use
+ *
+ * These parameters are fixed when connecting to the network
+ */
+struct ocb_setup {
+	struct cfg80211_chan_def chandef;
+};
+
+/**
+ * struct ieee80211_txq_params - TX queue parameters
+ * @ac: AC identifier
+ * @txop: Maximum burst time in units of 32 usecs, 0 meaning disabled
+ * @cwmin: Minimum contention window [a value of the form 2^n-1 in the range
+ *	1..32767]
+ * @cwmax: Maximum contention window [a value of the form 2^n-1 in the range
+ *	1..32767]
+ * @aifs: Arbitration interframe space [0..255]
+ */
+struct ieee80211_txq_params {
+	enum nl80211_ac ac;
+	u16 txop;
+	u16 cwmin;
+	u16 cwmax;
+	u8 aifs;
+};
+
+/**
+ * DOC: Scanning and BSS list handling
+ *
+ * The scanning process itself is fairly simple, but cfg80211 offers quite
+ * a bit of helper functionality. To start a scan, the scan operation will
+ * be invoked with a scan definition. This scan definition contains the
+ * channels to scan, and the SSIDs to send probe requests for (including the
+ * wildcard, if desired). A passive scan is indicated by having no SSIDs to
+ * probe. Additionally, a scan request may contain extra information elements
+ * that should be added to the probe request. The IEs are guaranteed to be
+ * well-formed, and will not exceed the maximum length the driver advertised
+ * in the wiphy structure.
+ *
+ * When scanning finds a BSS, cfg80211 needs to be notified of that, because
+ * it is responsible for maintaining the BSS list; the driver should not
+ * maintain a list itself. For this notification, various functions exist.
+ *
+ * Since drivers do not maintain a BSS list, there are also a number of
+ * functions to search for a BSS and obtain information about it from the
+ * BSS structure cfg80211 maintains. The BSS list is also made available
+ * to userspace.
+ */
+
+/**
+ * struct cfg80211_ssid - SSID description
+ * @ssid: the SSID
+ * @ssid_len: length of the ssid
+ */
+struct cfg80211_ssid {
+	u8 ssid[IEEE80211_MAX_SSID_LEN];
+	u8 ssid_len;
+};
+
+/**
+ * struct cfg80211_scan_request - scan request description
+ *
+ * @ssids: SSIDs to scan for (active scan only)
+ * @n_ssids: number of SSIDs
+ * @channels: channels to scan on.
+ * @n_channels: total number of channels to scan
+ * @scan_width: channel width for scanning
+ * @ie: optional information element(s) to add into Probe Request or %NULL
+ * @ie_len: length of ie in octets
+ * @flags: bit field of flags controlling operation
+ * @rates: bitmap of rates to advertise for each band
+ * @wiphy: the wiphy this was for
+ * @scan_start: time (in jiffies) when the scan started
+ * @wdev: the wireless device to scan for
+ * @aborted: (internal) scan request was notified as aborted
+ * @notified: (internal) scan request was notified as done or aborted
+ * @no_cck: used to send probe requests at non CCK rate in 2GHz band
+ * @mac_addr: MAC address used with randomisation
+ * @mac_addr_mask: MAC address mask used with randomisation, bits that
+ *	are 0 in the mask should be randomised, bits that are 1 should
+ *	be taken from the @mac_addr
+ */
+struct cfg80211_scan_request {
+	struct cfg80211_ssid *ssids;
+	int n_ssids;
+	u32 n_channels;
+	enum nl80211_bss_scan_width scan_width;
+	const u8 *ie;
+	size_t ie_len;
+	u32 flags;
+
+	u32 rates[IEEE80211_NUM_BANDS];
+
+	struct wireless_dev *wdev;
+
+	u8 mac_addr[ETH_ALEN] __aligned(2);
+	u8 mac_addr_mask[ETH_ALEN] __aligned(2);
+
+	/* internal */
+	struct wiphy *wiphy;
+	unsigned long scan_start;
+	bool aborted, notified;
+	bool no_cck;
+
+	/* keep last */
+	struct ieee80211_channel *channels[0];
+};
+
+static inline void get_random_mask_addr(u8 *buf, const u8 *addr, const u8 *mask)
+{
+	int i;
+
+	get_random_bytes(buf, ETH_ALEN);
+	for (i = 0; i < ETH_ALEN; i++) {
+		buf[i] &= ~mask[i];
+		buf[i] |= addr[i] & mask[i];
+	}
+}
+
+/**
+ * struct cfg80211_match_set - sets of attributes to match
+ *
+ * @ssid: SSID to be matched; may be zero-length for no match (RSSI only)
+ * @rssi_thold: don't report scan results below this threshold (in s32 dBm)
+ */
+struct cfg80211_match_set {
+	struct cfg80211_ssid ssid;
+	s32 rssi_thold;
+};
+
+/**
+ * struct cfg80211_sched_scan_request - scheduled scan request description
+ *
+ * @ssids: SSIDs to scan for (passed in the probe_reqs in active scans)
+ * @n_ssids: number of SSIDs
+ * @n_channels: total number of channels to scan
+ * @scan_width: channel width for scanning
+ * @interval: interval between each scheduled scan cycle
+ * @ie: optional information element(s) to add into Probe Request or %NULL
+ * @ie_len: length of ie in octets
+ * @flags: bit field of flags controlling operation
+ * @match_sets: sets of parameters to be matched for a scan result
+ * 	entry to be considered valid and to be passed to the host
+ * 	(others are filtered out).
+ *	If ommited, all results are passed.
+ * @n_match_sets: number of match sets
+ * @wiphy: the wiphy this was for
+ * @dev: the interface
+ * @scan_start: start time of the scheduled scan
+ * @channels: channels to scan
+ * @min_rssi_thold: for drivers only supporting a single threshold, this
+ *	contains the minimum over all matchsets
+ * @mac_addr: MAC address used with randomisation
+ * @mac_addr_mask: MAC address mask used with randomisation, bits that
+ *	are 0 in the mask should be randomised, bits that are 1 should
+ *	be taken from the @mac_addr
+ * @rcu_head: RCU callback used to free the struct
+ * @owner_nlportid: netlink portid of owner (if this should is a request
+ *	owned by a particular socket)
+ * @delay: delay in seconds to use before starting the first scan
+ *	cycle.  The driver may ignore this parameter and start
+ *	immediately (or at any other time), if this feature is not
+ *	supported.
+ */
+struct cfg80211_sched_scan_request {
+	struct cfg80211_ssid *ssids;
+	int n_ssids;
+	u32 n_channels;
+	enum nl80211_bss_scan_width scan_width;
+	u32 interval;
+	const u8 *ie;
+	size_t ie_len;
+	u32 flags;
+	struct cfg80211_match_set *match_sets;
+	int n_match_sets;
+	s32 min_rssi_thold;
+	u32 delay;
+
+	u8 mac_addr[ETH_ALEN] __aligned(2);
+	u8 mac_addr_mask[ETH_ALEN] __aligned(2);
+
+	/* internal */
+	struct wiphy *wiphy;
+	struct net_device *dev;
+	unsigned long scan_start;
+	struct rcu_head rcu_head;
+	u32 owner_nlportid;
+
+	/* keep last */
+	struct ieee80211_channel *channels[0];
+};
+
+/**
+ * enum cfg80211_signal_type - signal type
+ *
+ * @CFG80211_SIGNAL_TYPE_NONE: no signal strength information available
+ * @CFG80211_SIGNAL_TYPE_MBM: signal strength in mBm (100*dBm)
+ * @CFG80211_SIGNAL_TYPE_UNSPEC: signal strength, increasing from 0 through 100
+ */
+enum cfg80211_signal_type {
+	CFG80211_SIGNAL_TYPE_NONE,
+	CFG80211_SIGNAL_TYPE_MBM,
+	CFG80211_SIGNAL_TYPE_UNSPEC,
+};
+
+/**
+ * struct cfg80211_bss_ie_data - BSS entry IE data
+ * @tsf: TSF contained in the frame that carried these IEs
+ * @rcu_head: internal use, for freeing
+ * @len: length of the IEs
+ * @from_beacon: these IEs are known to come from a beacon
+ * @data: IE data
+ */
+struct cfg80211_bss_ies {
+	u64 tsf;
+	struct rcu_head rcu_head;
+	int len;
+	bool from_beacon;
+	u8 data[];
+};
+
+/**
+ * struct cfg80211_bss - BSS description
+ *
+ * This structure describes a BSS (which may also be a mesh network)
+ * for use in scan results and similar.
+ *
+ * @channel: channel this BSS is on
+ * @scan_width: width of the control channel
+ * @bssid: BSSID of the BSS
+ * @beacon_interval: the beacon interval as from the frame
+ * @capability: the capability field in host byte order
+ * @ies: the information elements (Note that there is no guarantee that these
+ *	are well-formed!); this is a pointer to either the beacon_ies or
+ *	proberesp_ies depending on whether Probe Response frame has been
+ *	received. It is always non-%NULL.
+ * @beacon_ies: the information elements from the last Beacon frame
+ *	(implementation note: if @hidden_beacon_bss is set this struct doesn't
+ *	own the beacon_ies, but they're just pointers to the ones from the
+ *	@hidden_beacon_bss struct)
+ * @proberesp_ies: the information elements from the last Probe Response frame
+ * @hidden_beacon_bss: in case this BSS struct represents a probe response from
+ *	a BSS that hides the SSID in its beacon, this points to the BSS struct
+ *	that holds the beacon data. @beacon_ies is still valid, of course, and
+ *	points to the same data as hidden_beacon_bss->beacon_ies in that case.
+ * @signal: signal strength value (type depends on the wiphy's signal_type)
+ * @priv: private area for driver use, has at least wiphy->bss_priv_size bytes
+ */
+struct cfg80211_bss {
+	struct ieee80211_channel *channel;
+	enum nl80211_bss_scan_width scan_width;
+
+	const struct cfg80211_bss_ies __rcu *ies;
+	const struct cfg80211_bss_ies __rcu *beacon_ies;
+	const struct cfg80211_bss_ies __rcu *proberesp_ies;
+
+	struct cfg80211_bss *hidden_beacon_bss;
+
+	s32 signal;
+
+	u16 beacon_interval;
+	u16 capability;
+
+	u8 bssid[ETH_ALEN];
+
+	u8 priv[0] __aligned(sizeof(void *));
+};
+
+/**
+ * ieee80211_bss_get_ie - find IE with given ID
+ * @bss: the bss to search
+ * @ie: the IE ID
+ *
+ * Note that the return value is an RCU-protected pointer, so
+ * rcu_read_lock() must be held when calling this function.
+ * Return: %NULL if not found.
+ */
+const u8 *ieee80211_bss_get_ie(struct cfg80211_bss *bss, u8 ie);
+
+
+/**
+ * struct cfg80211_auth_request - Authentication request data
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * authentication.
+ *
+ * @bss: The BSS to authenticate with, the callee must obtain a reference
+ *	to it if it needs to keep it.
+ * @auth_type: Authentication type (algorithm)
+ * @ie: Extra IEs to add to Authentication frame or %NULL
+ * @ie_len: Length of ie buffer in octets
+ * @key_len: length of WEP key for shared key authentication
+ * @key_idx: index of WEP key for shared key authentication
+ * @key: WEP key for shared key authentication
+ * @sae_data: Non-IE data to use with SAE or %NULL. This starts with
+ *	Authentication transaction sequence number field.
+ * @sae_data_len: Length of sae_data buffer in octets
+ */
+struct cfg80211_auth_request {
+	struct cfg80211_bss *bss;
+	const u8 *ie;
+	size_t ie_len;
+	enum nl80211_auth_type auth_type;
+	const u8 *key;
+	u8 key_len, key_idx;
+	const u8 *sae_data;
+	size_t sae_data_len;
+};
+
+/**
+ * enum cfg80211_assoc_req_flags - Over-ride default behaviour in association.
+ *
+ * @ASSOC_REQ_DISABLE_HT:  Disable HT (802.11n)
+ * @ASSOC_REQ_DISABLE_VHT:  Disable VHT
+ * @ASSOC_REQ_USE_RRM: Declare RRM capability in this association
+ */
+enum cfg80211_assoc_req_flags {
+	ASSOC_REQ_DISABLE_HT		= BIT(0),
+	ASSOC_REQ_DISABLE_VHT		= BIT(1),
+	ASSOC_REQ_USE_RRM		= BIT(2),
+};
+
+/**
+ * struct cfg80211_assoc_request - (Re)Association request data
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * (re)association.
+ * @bss: The BSS to associate with. If the call is successful the driver is
+ *	given a reference that it must give back to cfg80211_send_rx_assoc()
+ *	or to cfg80211_assoc_timeout(). To ensure proper refcounting, new
+ *	association requests while already associating must be rejected.
+ * @ie: Extra IEs to add to (Re)Association Request frame or %NULL
+ * @ie_len: Length of ie buffer in octets
+ * @use_mfp: Use management frame protection (IEEE 802.11w) in this association
+ * @crypto: crypto settings
+ * @prev_bssid: previous BSSID, if not %NULL use reassociate frame
+ * @flags:  See &enum cfg80211_assoc_req_flags
+ * @ht_capa:  HT Capabilities over-rides.  Values set in ht_capa_mask
+ *	will be used in ht_capa.  Un-supported values will be ignored.
+ * @ht_capa_mask:  The bits of ht_capa which are to be used.
+ * @vht_capa: VHT capability override
+ * @vht_capa_mask: VHT capability mask indicating which fields to use
+ */
+struct cfg80211_assoc_request {
+	struct cfg80211_bss *bss;
+	const u8 *ie, *prev_bssid;
+	size_t ie_len;
+	struct cfg80211_crypto_settings crypto;
+	bool use_mfp;
+	u32 flags;
+	struct ieee80211_ht_cap ht_capa;
+	struct ieee80211_ht_cap ht_capa_mask;
+	struct ieee80211_vht_cap vht_capa, vht_capa_mask;
+};
+
+/**
+ * struct cfg80211_deauth_request - Deauthentication request data
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * deauthentication.
+ *
+ * @bssid: the BSSID of the BSS to deauthenticate from
+ * @ie: Extra IEs to add to Deauthentication frame or %NULL
+ * @ie_len: Length of ie buffer in octets
+ * @reason_code: The reason code for the deauthentication
+ * @local_state_change: if set, change local state only and
+ *	do not set a deauth frame
+ */
+struct cfg80211_deauth_request {
+	const u8 *bssid;
+	const u8 *ie;
+	size_t ie_len;
+	u16 reason_code;
+	bool local_state_change;
+};
+
+/**
+ * struct cfg80211_disassoc_request - Disassociation request data
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * disassocation.
+ *
+ * @bss: the BSS to disassociate from
+ * @ie: Extra IEs to add to Disassociation frame or %NULL
+ * @ie_len: Length of ie buffer in octets
+ * @reason_code: The reason code for the disassociation
+ * @local_state_change: This is a request for a local state only, i.e., no
+ *	Disassociation frame is to be transmitted.
+ */
+struct cfg80211_disassoc_request {
+	struct cfg80211_bss *bss;
+	const u8 *ie;
+	size_t ie_len;
+	u16 reason_code;
+	bool local_state_change;
+};
+
+/**
+ * struct cfg80211_ibss_params - IBSS parameters
+ *
+ * This structure defines the IBSS parameters for the join_ibss()
+ * method.
+ *
+ * @ssid: The SSID, will always be non-null.
+ * @ssid_len: The length of the SSID, will always be non-zero.
+ * @bssid: Fixed BSSID requested, maybe be %NULL, if set do not
+ *	search for IBSSs with a different BSSID.
+ * @chandef: defines the channel to use if no other IBSS to join can be found
+ * @channel_fixed: The channel should be fixed -- do not search for
+ *	IBSSs to join on other channels.
+ * @ie: information element(s) to include in the beacon
+ * @ie_len: length of that
+ * @beacon_interval: beacon interval to use
+ * @privacy: this is a protected network, keys will be configured
+ *	after joining
+ * @control_port: whether user space controls IEEE 802.1X port, i.e.,
+ *	sets/clears %NL80211_STA_FLAG_AUTHORIZED. If true, the driver is
+ *	required to assume that the port is unauthorized until authorized by
+ *	user space. Otherwise, port is marked authorized by default.
+ * @userspace_handles_dfs: whether user space controls DFS operation, i.e.
+ *	changes the channel when a radar is detected. This is required
+ *	to operate on DFS channels.
+ * @basic_rates: bitmap of basic rates to use when creating the IBSS
+ * @mcast_rate: per-band multicast rate index + 1 (0: disabled)
+ * @ht_capa:  HT Capabilities over-rides.  Values set in ht_capa_mask
+ *	will be used in ht_capa.  Un-supported values will be ignored.
+ * @ht_capa_mask:  The bits of ht_capa which are to be used.
+ */
+struct cfg80211_ibss_params {
+	const u8 *ssid;
+	const u8 *bssid;
+	struct cfg80211_chan_def chandef;
+	const u8 *ie;
+	u8 ssid_len, ie_len;
+	u16 beacon_interval;
+	u32 basic_rates;
+	bool channel_fixed;
+	bool privacy;
+	bool control_port;
+	bool userspace_handles_dfs;
+	int mcast_rate[IEEE80211_NUM_BANDS];
+	struct ieee80211_ht_cap ht_capa;
+	struct ieee80211_ht_cap ht_capa_mask;
+};
+
+/**
+ * struct cfg80211_connect_params - Connection parameters
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * authentication and association.
+ *
+ * @channel: The channel to use or %NULL if not specified (auto-select based
+ *	on scan results)
+ * @channel_hint: The channel of the recommended BSS for initial connection or
+ *	%NULL if not specified
+ * @bssid: The AP BSSID or %NULL if not specified (auto-select based on scan
+ *	results)
+ * @bssid_hint: The recommended AP BSSID for initial connection to the BSS or
+ *	%NULL if not specified. Unlike the @bssid parameter, the driver is
+ *	allowed to ignore this @bssid_hint if it has knowledge of a better BSS
+ *	to use.
+ * @ssid: SSID
+ * @ssid_len: Length of ssid in octets
+ * @auth_type: Authentication type (algorithm)
+ * @ie: IEs for association request
+ * @ie_len: Length of assoc_ie in octets
+ * @privacy: indicates whether privacy-enabled APs should be used
+ * @mfp: indicate whether management frame protection is used
+ * @crypto: crypto settings
+ * @key_len: length of WEP key for shared key authentication
+ * @key_idx: index of WEP key for shared key authentication
+ * @key: WEP key for shared key authentication
+ * @flags:  See &enum cfg80211_assoc_req_flags
+ * @bg_scan_period:  Background scan period in seconds
+ *	or -1 to indicate that default value is to be used.
+ * @ht_capa:  HT Capabilities over-rides.  Values set in ht_capa_mask
+ *	will be used in ht_capa.  Un-supported values will be ignored.
+ * @ht_capa_mask:  The bits of ht_capa which are to be used.
+ * @vht_capa:  VHT Capability overrides
+ * @vht_capa_mask: The bits of vht_capa which are to be used.
+ */
+struct cfg80211_connect_params {
+	struct ieee80211_channel *channel;
+	struct ieee80211_channel *channel_hint;
+	const u8 *bssid;
+	const u8 *bssid_hint;
+	const u8 *ssid;
+	size_t ssid_len;
+	enum nl80211_auth_type auth_type;
+	const u8 *ie;
+	size_t ie_len;
+	bool privacy;
+	enum nl80211_mfp mfp;
+	struct cfg80211_crypto_settings crypto;
+	const u8 *key;
+	u8 key_len, key_idx;
+	u32 flags;
+	int bg_scan_period;
+	struct ieee80211_ht_cap ht_capa;
+	struct ieee80211_ht_cap ht_capa_mask;
+	struct ieee80211_vht_cap vht_capa;
+	struct ieee80211_vht_cap vht_capa_mask;
+};
+
+/**
+ * enum wiphy_params_flags - set_wiphy_params bitfield values
+ * @WIPHY_PARAM_RETRY_SHORT: wiphy->retry_short has changed
+ * @WIPHY_PARAM_RETRY_LONG: wiphy->retry_long has changed
+ * @WIPHY_PARAM_FRAG_THRESHOLD: wiphy->frag_threshold has changed
+ * @WIPHY_PARAM_RTS_THRESHOLD: wiphy->rts_threshold has changed
+ * @WIPHY_PARAM_COVERAGE_CLASS: coverage class changed
+ * @WIPHY_PARAM_DYN_ACK: dynack has been enabled
+ */
+enum wiphy_params_flags {
+	WIPHY_PARAM_RETRY_SHORT		= 1 << 0,
+	WIPHY_PARAM_RETRY_LONG		= 1 << 1,
+	WIPHY_PARAM_FRAG_THRESHOLD	= 1 << 2,
+	WIPHY_PARAM_RTS_THRESHOLD	= 1 << 3,
+	WIPHY_PARAM_COVERAGE_CLASS	= 1 << 4,
+	WIPHY_PARAM_DYN_ACK		= 1 << 5,
+};
+
+/*
+ * cfg80211_bitrate_mask - masks for bitrate control
+ */
+struct cfg80211_bitrate_mask {
+	struct {
+		u32 legacy;
+		u8 ht_mcs[IEEE80211_HT_MCS_MASK_LEN];
+		u16 vht_mcs[NL80211_VHT_NSS_MAX];
+		enum nl80211_txrate_gi gi;
+	} control[IEEE80211_NUM_BANDS];
+};
+/**
+ * struct cfg80211_pmksa - PMK Security Association
+ *
+ * This structure is passed to the set/del_pmksa() method for PMKSA
+ * caching.
+ *
+ * @bssid: The AP's BSSID.
+ * @pmkid: The PMK material itself.
+ */
+struct cfg80211_pmksa {
+	const u8 *bssid;
+	const u8 *pmkid;
+};
+
+/**
+ * struct cfg80211_pkt_pattern - packet pattern
+ * @mask: bitmask where to match pattern and where to ignore bytes,
+ *	one bit per byte, in same format as nl80211
+ * @pattern: bytes to match where bitmask is 1
+ * @pattern_len: length of pattern (in bytes)
+ * @pkt_offset: packet offset (in bytes)
+ *
+ * Internal note: @mask and @pattern are allocated in one chunk of
+ * memory, free @mask only!
+ */
+struct cfg80211_pkt_pattern {
+	const u8 *mask, *pattern;
+	int pattern_len;
+	int pkt_offset;
+};
+
+/**
+ * struct cfg80211_wowlan_tcp - TCP connection parameters
+ *
+ * @sock: (internal) socket for source port allocation
+ * @src: source IP address
+ * @dst: destination IP address
+ * @dst_mac: destination MAC address
+ * @src_port: source port
+ * @dst_port: destination port
+ * @payload_len: data payload length
+ * @payload: data payload buffer
+ * @payload_seq: payload sequence stamping configuration
+ * @data_interval: interval at which to send data packets
+ * @wake_len: wakeup payload match length
+ * @wake_data: wakeup payload match data
+ * @wake_mask: wakeup payload match mask
+ * @tokens_size: length of the tokens buffer
+ * @payload_tok: payload token usage configuration
+ */
+struct cfg80211_wowlan_tcp {
+	struct socket *sock;
+	__be32 src, dst;
+	u16 src_port, dst_port;
+	u8 dst_mac[ETH_ALEN];
+	int payload_len;
+	const u8 *payload;
+	struct nl80211_wowlan_tcp_data_seq payload_seq;
+	u32 data_interval;
+	u32 wake_len;
+	const u8 *wake_data, *wake_mask;
+	u32 tokens_size;
+	/* must be last, variable member */
+	struct nl80211_wowlan_tcp_data_token payload_tok;
+};
+
+/**
+ * struct cfg80211_wowlan - Wake on Wireless-LAN support info
+ *
+ * This structure defines the enabled WoWLAN triggers for the device.
+ * @any: wake up on any activity -- special trigger if device continues
+ *	operating as normal during suspend
+ * @disconnect: wake up if getting disconnected
+ * @magic_pkt: wake up on receiving magic packet
+ * @patterns: wake up on receiving packet matching a pattern
+ * @n_patterns: number of patterns
+ * @gtk_rekey_failure: wake up on GTK rekey failure
+ * @eap_identity_req: wake up on EAP identity request packet
+ * @four_way_handshake: wake up on 4-way handshake
+ * @rfkill_release: wake up when rfkill is released
+ * @tcp: TCP connection establishment/wakeup parameters, see nl80211.h.
+ *	NULL if not configured.
+ * @nd_config: configuration for the scan to be used for net detect wake.
+ */
+struct cfg80211_wowlan {
+	bool any, disconnect, magic_pkt, gtk_rekey_failure,
+	     eap_identity_req, four_way_handshake,
+	     rfkill_release;
+	struct cfg80211_pkt_pattern *patterns;
+	struct cfg80211_wowlan_tcp *tcp;
+	int n_patterns;
+	struct cfg80211_sched_scan_request *nd_config;
+};
+
+/**
+ * struct cfg80211_coalesce_rules - Coalesce rule parameters
+ *
+ * This structure defines coalesce rule for the device.
+ * @delay: maximum coalescing delay in msecs.
+ * @condition: condition for packet coalescence.
+ *	see &enum nl80211_coalesce_condition.
+ * @patterns: array of packet patterns
+ * @n_patterns: number of patterns
+ */
+struct cfg80211_coalesce_rules {
+	int delay;
+	enum nl80211_coalesce_condition condition;
+	struct cfg80211_pkt_pattern *patterns;
+	int n_patterns;
+};
+
+/**
+ * struct cfg80211_coalesce - Packet coalescing settings
+ *
+ * This structure defines coalescing settings.
+ * @rules: array of coalesce rules
+ * @n_rules: number of rules
+ */
+struct cfg80211_coalesce {
+	struct cfg80211_coalesce_rules *rules;
+	int n_rules;
+};
+
+/**
+ * struct cfg80211_wowlan_nd_match - information about the match
+ *
+ * @ssid: SSID of the match that triggered the wake up
+ * @n_channels: Number of channels where the match occurred.  This
+ *	value may be zero if the driver can't report the channels.
+ * @channels: center frequencies of the channels where a match
+ *	occurred (in MHz)
+ */
+struct cfg80211_wowlan_nd_match {
+	struct cfg80211_ssid ssid;
+	int n_channels;
+	u32 channels[];
+};
+
+/**
+ * struct cfg80211_wowlan_nd_info - net detect wake up information
+ *
+ * @n_matches: Number of match information instances provided in
+ *	@matches.  This value may be zero if the driver can't provide
+ *	match information.
+ * @matches: Array of pointers to matches containing information about
+ *	the matches that triggered the wake up.
+ */
+struct cfg80211_wowlan_nd_info {
+	int n_matches;
+	struct cfg80211_wowlan_nd_match *matches[];
+};
+
+/**
+ * struct cfg80211_wowlan_wakeup - wakeup report
+ * @disconnect: woke up by getting disconnected
+ * @magic_pkt: woke up by receiving magic packet
+ * @gtk_rekey_failure: woke up by GTK rekey failure
+ * @eap_identity_req: woke up by EAP identity request packet
+ * @four_way_handshake: woke up by 4-way handshake
+ * @rfkill_release: woke up by rfkill being released
+ * @pattern_idx: pattern that caused wakeup, -1 if not due to pattern
+ * @packet_present_len: copied wakeup packet data
+ * @packet_len: original wakeup packet length
+ * @packet: The packet causing the wakeup, if any.
+ * @packet_80211:  For pattern match, magic packet and other data
+ *	frame triggers an 802.3 frame should be reported, for
+ *	disconnect due to deauth 802.11 frame. This indicates which
+ *	it is.
+ * @tcp_match: TCP wakeup packet received
+ * @tcp_connlost: TCP connection lost or failed to establish
+ * @tcp_nomoretokens: TCP data ran out of tokens
+ * @net_detect: if not %NULL, woke up because of net detect
+ */
+struct cfg80211_wowlan_wakeup {
+	bool disconnect, magic_pkt, gtk_rekey_failure,
+	     eap_identity_req, four_way_handshake,
+	     rfkill_release, packet_80211,
+	     tcp_match, tcp_connlost, tcp_nomoretokens;
+	s32 pattern_idx;
+	u32 packet_present_len, packet_len;
+	const void *packet;
+	struct cfg80211_wowlan_nd_info *net_detect;
+};
+
+/**
+ * struct cfg80211_gtk_rekey_data - rekey data
+ * @kek: key encryption key (NL80211_KEK_LEN bytes)
+ * @kck: key confirmation key (NL80211_KCK_LEN bytes)
+ * @replay_ctr: replay counter (NL80211_REPLAY_CTR_LEN bytes)
+ */
+struct cfg80211_gtk_rekey_data {
+	const u8 *kek, *kck, *replay_ctr;
+};
+
+/**
+ * struct cfg80211_update_ft_ies_params - FT IE Information
+ *
+ * This structure provides information needed to update the fast transition IE
+ *
+ * @md: The Mobility Domain ID, 2 Octet value
+ * @ie: Fast Transition IEs
+ * @ie_len: Length of ft_ie in octets
+ */
+struct cfg80211_update_ft_ies_params {
+	u16 md;
+	const u8 *ie;
+	size_t ie_len;
+};
+
+/**
+ * struct cfg80211_mgmt_tx_params - mgmt tx parameters
+ *
+ * This structure provides information needed to transmit a mgmt frame
+ *
+ * @chan: channel to use
+ * @offchan: indicates wether off channel operation is required
+ * @wait: duration for ROC
+ * @buf: buffer to transmit
+ * @len: buffer length
+ * @no_cck: don't use cck rates for this frame
+ * @dont_wait_for_ack: tells the low level not to wait for an ack
+ * @n_csa_offsets: length of csa_offsets array
+ * @csa_offsets: array of all the csa offsets in the frame
+ */
+struct cfg80211_mgmt_tx_params {
+	struct ieee80211_channel *chan;
+	bool offchan;
+	unsigned int wait;
+	const u8 *buf;
+	size_t len;
+	bool no_cck;
+	bool dont_wait_for_ack;
+	int n_csa_offsets;
+	const u16 *csa_offsets;
+};
+
+/**
+ * struct cfg80211_dscp_exception - DSCP exception
+ *
+ * @dscp: DSCP value that does not adhere to the user priority range definition
+ * @up: user priority value to which the corresponding DSCP value belongs
+ */
+struct cfg80211_dscp_exception {
+	u8 dscp;
+	u8 up;
+};
+
+/**
+ * struct cfg80211_dscp_range - DSCP range definition for user priority
+ *
+ * @low: lowest DSCP value of this user priority range, inclusive
+ * @high: highest DSCP value of this user priority range, inclusive
+ */
+struct cfg80211_dscp_range {
+	u8 low;
+	u8 high;
+};
+
+/* QoS Map Set element length defined in IEEE Std 802.11-2012, 8.4.2.97 */
+#define IEEE80211_QOS_MAP_MAX_EX	21
+#define IEEE80211_QOS_MAP_LEN_MIN	16
+#define IEEE80211_QOS_MAP_LEN_MAX \
+	(IEEE80211_QOS_MAP_LEN_MIN + 2 * IEEE80211_QOS_MAP_MAX_EX)
+
+/**
+ * struct cfg80211_qos_map - QoS Map Information
+ *
+ * This struct defines the Interworking QoS map setting for DSCP values
+ *
+ * @num_des: number of DSCP exceptions (0..21)
+ * @dscp_exception: optionally up to maximum of 21 DSCP exceptions from
+ *	the user priority DSCP range definition
+ * @up: DSCP range definition for a particular user priority
+ */
+struct cfg80211_qos_map {
+	u8 num_des;
+	struct cfg80211_dscp_exception dscp_exception[IEEE80211_QOS_MAP_MAX_EX];
+	struct cfg80211_dscp_range up[8];
+};
+
+/**
+ * struct cfg80211_ops - backend description for wireless configuration
+ *
+ * This struct is registered by fullmac card drivers and/or wireless stacks
+ * in order to handle configuration requests on their interfaces.
+ *
+ * All callbacks except where otherwise noted should return 0
+ * on success or a negative error code.
+ *
+ * All operations are currently invoked under rtnl for consistency with the
+ * wireless extensions but this is subject to reevaluation as soon as this
+ * code is used more widely and we have a first user without wext.
+ *
+ * @suspend: wiphy device needs to be suspended. The variable @wow will
+ *	be %NULL or contain the enabled Wake-on-Wireless triggers that are
+ *	configured for the device.
+ * @resume: wiphy device needs to be resumed
+ * @set_wakeup: Called when WoWLAN is enabled/disabled, use this callback
+ *	to call device_set_wakeup_enable() to enable/disable wakeup from
+ *	the device.
+ *
+ * @add_virtual_intf: create a new virtual interface with the given name,
+ *	must set the struct wireless_dev's iftype. Beware: You must create
+ *	the new netdev in the wiphy's network namespace! Returns the struct
+ *	wireless_dev, or an ERR_PTR. For P2P device wdevs, the driver must
+ *	also set the address member in the wdev.
+ *
+ * @del_virtual_intf: remove the virtual interface
+ *
+ * @change_virtual_intf: change type/configuration of virtual interface,
+ *	keep the struct wireless_dev's iftype updated.
+ *
+ * @add_key: add a key with the given parameters. @mac_addr will be %NULL
+ *	when adding a group key.
+ *
+ * @get_key: get information about the key with the given parameters.
+ *	@mac_addr will be %NULL when requesting information for a group
+ *	key. All pointers given to the @callback function need not be valid
+ *	after it returns. This function should return an error if it is
+ *	not possible to retrieve the key, -ENOENT if it doesn't exist.
+ *
+ * @del_key: remove a key given the @mac_addr (%NULL for a group key)
+ *	and @key_index, return -ENOENT if the key doesn't exist.
+ *
+ * @set_default_key: set the default key on an interface
+ *
+ * @set_default_mgmt_key: set the default management frame key on an interface
+ *
+ * @set_rekey_data: give the data necessary for GTK rekeying to the driver
+ *
+ * @start_ap: Start acting in AP mode defined by the parameters.
+ * @change_beacon: Change the beacon parameters for an access point mode
+ *	interface. This should reject the call when AP mode wasn't started.
+ * @stop_ap: Stop being an AP, including stopping beaconing.
+ *
+ * @add_station: Add a new station.
+ * @del_station: Remove a station
+ * @change_station: Modify a given station. Note that flags changes are not much
+ *	validated in cfg80211, in particular the auth/assoc/authorized flags
+ *	might come to the driver in invalid combinations -- make sure to check
+ *	them, also against the existing state! Drivers must call
+ *	cfg80211_check_station_change() to validate the information.
+ * @get_station: get station information for the station identified by @mac
+ * @dump_station: dump station callback -- resume dump at index @idx
+ *
+ * @add_mpath: add a fixed mesh path
+ * @del_mpath: delete a given mesh path
+ * @change_mpath: change a given mesh path
+ * @get_mpath: get a mesh path for the given parameters
+ * @dump_mpath: dump mesh path callback -- resume dump at index @idx
+ * @get_mpp: get a mesh proxy path for the given parameters
+ * @dump_mpp: dump mesh proxy path callback -- resume dump at index @idx
+ * @join_mesh: join the mesh network with the specified parameters
+ *	(invoked with the wireless_dev mutex held)
+ * @leave_mesh: leave the current mesh network
+ *	(invoked with the wireless_dev mutex held)
+ *
+ * @get_mesh_config: Get the current mesh configuration
+ *
+ * @update_mesh_config: Update mesh parameters on a running mesh.
+ *	The mask is a bitfield which tells us which parameters to
+ *	set, and which to leave alone.
+ *
+ * @change_bss: Modify parameters for a given BSS.
+ *
+ * @set_txq_params: Set TX queue parameters
+ *
+ * @libertas_set_mesh_channel: Only for backward compatibility for libertas,
+ *	as it doesn't implement join_mesh and needs to set the channel to
+ *	join the mesh instead.
+ *
+ * @set_monitor_channel: Set the monitor mode channel for the device. If other
+ *	interfaces are active this callback should reject the configuration.
+ *	If no interfaces are active or the device is down, the channel should
+ *	be stored for when a monitor interface becomes active.
+ *
+ * @scan: Request to do a scan. If returning zero, the scan request is given
+ *	the driver, and will be valid until passed to cfg80211_scan_done().
+ *	For scan results, call cfg80211_inform_bss(); you can call this outside
+ *	the scan/scan_done bracket too.
+ *
+ * @auth: Request to authenticate with the specified peer
+ *	(invoked with the wireless_dev mutex held)
+ * @assoc: Request to (re)associate with the specified peer
+ *	(invoked with the wireless_dev mutex held)
+ * @deauth: Request to deauthenticate from the specified peer
+ *	(invoked with the wireless_dev mutex held)
+ * @disassoc: Request to disassociate from the specified peer
+ *	(invoked with the wireless_dev mutex held)
+ *
+ * @connect: Connect to the ESS with the specified parameters. When connected,
+ *	call cfg80211_connect_result() with status code %WLAN_STATUS_SUCCESS.
+ *	If the connection fails for some reason, call cfg80211_connect_result()
+ *	with the status from the AP.
+ *	(invoked with the wireless_dev mutex held)
+ * @disconnect: Disconnect from the BSS/ESS.
+ *	(invoked with the wireless_dev mutex held)
+ *
+ * @join_ibss: Join the specified IBSS (or create if necessary). Once done, call
+ *	cfg80211_ibss_joined(), also call that function when changing BSSID due
+ *	to a merge.
+ *	(invoked with the wireless_dev mutex held)
+ * @leave_ibss: Leave the IBSS.
+ *	(invoked with the wireless_dev mutex held)
+ *
+ * @set_mcast_rate: Set the specified multicast rate (only if vif is in ADHOC or
+ *	MESH mode)
+ *
+ * @set_wiphy_params: Notify that wiphy parameters have changed;
+ *	@changed bitfield (see &enum wiphy_params_flags) describes which values
+ *	have changed. The actual parameter values are available in
+ *	struct wiphy. If returning an error, no value should be changed.
+ *
+ * @set_tx_power: set the transmit power according to the parameters,
+ *	the power passed is in mBm, to get dBm use MBM_TO_DBM(). The
+ *	wdev may be %NULL if power was set for the wiphy, and will
+ *	always be %NULL unless the driver supports per-vif TX power
+ *	(as advertised by the nl80211 feature flag.)
+ * @get_tx_power: store the current TX power into the dbm variable;
+ *	return 0 if successful
+ *
+ * @set_wds_peer: set the WDS peer for a WDS interface
+ *
+ * @rfkill_poll: polls the hw rfkill line, use cfg80211 reporting
+ *	functions to adjust rfkill hw state
+ *
+ * @dump_survey: get site survey information.
+ *
+ * @remain_on_channel: Request the driver to remain awake on the specified
+ *	channel for the specified duration to complete an off-channel
+ *	operation (e.g., public action frame exchange). When the driver is
+ *	ready on the requested channel, it must indicate this with an event
+ *	notification by calling cfg80211_ready_on_channel().
+ * @cancel_remain_on_channel: Cancel an on-going remain-on-channel operation.
+ *	This allows the operation to be terminated prior to timeout based on
+ *	the duration value.
+ * @mgmt_tx: Transmit a management frame.
+ * @mgmt_tx_cancel_wait: Cancel the wait time from transmitting a management
+ *	frame on another channel
+ *
+ * @testmode_cmd: run a test mode command; @wdev may be %NULL
+ * @testmode_dump: Implement a test mode dump. The cb->args[2] and up may be
+ *	used by the function, but 0 and 1 must not be touched. Additionally,
+ *	return error codes other than -ENOBUFS and -ENOENT will terminate the
+ *	dump and return to userspace with an error, so be careful. If any data
+ *	was passed in from userspace then the data/len arguments will be present
+ *	and point to the data contained in %NL80211_ATTR_TESTDATA.
+ *
+ * @set_bitrate_mask: set the bitrate mask configuration
+ *
+ * @set_pmksa: Cache a PMKID for a BSSID. This is mostly useful for fullmac
+ *	devices running firmwares capable of generating the (re) association
+ *	RSN IE. It allows for faster roaming between WPA2 BSSIDs.
+ * @del_pmksa: Delete a cached PMKID.
+ * @flush_pmksa: Flush all cached PMKIDs.
+ * @set_power_mgmt: Configure WLAN power management. A timeout value of -1
+ *	allows the driver to adjust the dynamic ps timeout value.
+ * @set_cqm_rssi_config: Configure connection quality monitor RSSI threshold.
+ * @set_cqm_txe_config: Configure connection quality monitor TX error
+ *	thresholds.
+ * @sched_scan_start: Tell the driver to start a scheduled scan.
+ * @sched_scan_stop: Tell the driver to stop an ongoing scheduled scan. This
+ *	call must stop the scheduled scan and be ready for starting a new one
+ *	before it returns, i.e. @sched_scan_start may be called immediately
+ *	after that again and should not fail in that case. The driver should
+ *	not call cfg80211_sched_scan_stopped() for a requested stop (when this
+ *	method returns 0.)
+ *
+ * @mgmt_frame_register: Notify driver that a management frame type was
+ *	registered. Note that this callback may not sleep, and cannot run
+ *	concurrently with itself.
+ *
+ * @set_antenna: Set antenna configuration (tx_ant, rx_ant) on the device.
+ *	Parameters are bitmaps of allowed antennas to use for TX/RX. Drivers may
+ *	reject TX/RX mask combinations they cannot support by returning -EINVAL
+ *	(also see nl80211.h @NL80211_ATTR_WIPHY_ANTENNA_TX).
+ *
+ * @get_antenna: Get current antenna configuration from device (tx_ant, rx_ant).
+ *
+ * @tdls_mgmt: Transmit a TDLS management frame.
+ * @tdls_oper: Perform a high-level TDLS operation (e.g. TDLS link setup).
+ *
+ * @probe_client: probe an associated client, must return a cookie that it
+ *	later passes to cfg80211_probe_status().
+ *
+ * @set_noack_map: Set the NoAck Map for the TIDs.
+ *
+ * @get_channel: Get the current operating channel for the virtual interface.
+ *	For monitor interfaces, it should return %NULL unless there's a single
+ *	current monitoring channel.
+ *
+ * @start_p2p_device: Start the given P2P device.
+ * @stop_p2p_device: Stop the given P2P device.
+ *
+ * @set_mac_acl: Sets MAC address control list in AP and P2P GO mode.
+ *	Parameters include ACL policy, an array of MAC address of stations
+ *	and the number of MAC addresses. If there is already a list in driver
+ *	this new list replaces the existing one. Driver has to clear its ACL
+ *	when number of MAC addresses entries is passed as 0. Drivers which
+ *	advertise the support for MAC based ACL have to implement this callback.
+ *
+ * @start_radar_detection: Start radar detection in the driver.
+ *
+ * @update_ft_ies: Provide updated Fast BSS Transition information to the
+ *	driver. If the SME is in the driver/firmware, this information can be
+ *	used in building Authentication and Reassociation Request frames.
+ *
+ * @crit_proto_start: Indicates a critical protocol needs more link reliability
+ *	for a given duration (milliseconds). The protocol is provided so the
+ *	driver can take the most appropriate actions.
+ * @crit_proto_stop: Indicates critical protocol no longer needs increased link
+ *	reliability. This operation can not fail.
+ * @set_coalesce: Set coalesce parameters.
+ *
+ * @channel_switch: initiate channel-switch procedure (with CSA). Driver is
+ *	responsible for veryfing if the switch is possible. Since this is
+ *	inherently tricky driver may decide to disconnect an interface later
+ *	with cfg80211_stop_iface(). This doesn't mean driver can accept
+ *	everything. It should do it's best to verify requests and reject them
+ *	as soon as possible.
+ *
+ * @set_qos_map: Set QoS mapping information to the driver
+ *
+ * @set_ap_chanwidth: Set the AP (including P2P GO) mode channel width for the
+ *	given interface This is used e.g. for dynamic HT 20/40 MHz channel width
+ *	changes during the lifetime of the BSS.
+ *
+ * @add_tx_ts: validate (if admitted_time is 0) or add a TX TS to the device
+ *	with the given parameters; action frame exchange has been handled by
+ *	userspace so this just has to modify the TX path to take the TS into
+ *	account.
+ *	If t

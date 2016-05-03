@@ -1,0 +1,27 @@
+1. 인터프리터의 계산 결과들은 모두 quoted 타입입니다
+
+2. 함수의 파라메터들은 모두 Quoted타입, NOT_quoted인 경우 runExpr을 통해 계산 후 이용
+(단 INT, Boolean은 제외)
+z
+아래는 수행 예제 입니다.
+
+cons
+(cons 'a '( ) ) ==> '( 'a )
+(define 'a 1) ==> #T
+(cons a '() ) ==> '( 1 )
+(cons 'a () ) ==> error
+
+car
+(car '( a b c ) ) ==> 'a
+(car '( (+ 1 2) 4) ) ==> '( + 1 2 )
+(car ( ( + 1 4) '3) ) ==> error: 5를 연산자로 보고 '3을 인자로 봄
+
+cdr
+(cdr '(a b c ) ) ==> '( b c )
+(cdr ( ( + 1 4) '3) ) ==> error: 5를 연산자로 보고 '3을 인자로 봄
+
+
+((lambda '(x) '(+ x 1)) 10)
+((lambda '(1) '(+ 2 1)) 10)
+(lambda '(x) '(+ x 1)) 
+(define 'plus1 '(lambda '(x) '(+ x 1)) )
